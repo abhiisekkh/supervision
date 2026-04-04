@@ -139,7 +139,7 @@ def process_video(video_path, output_path="output.mp4", grid_size=3):
     tracker = sv.ByteTrack()
     
     input_filename = os.path.splitext(os.path.basename(video_path))[0]
-    output_dir = os.path.join(os.path.dirname(video_path), input_filename)
+    output_dir = os.path.join(os.getcwd(), input_filename)
     os.makedirs(output_dir, exist_ok=True)
     
     final_output_path = os.path.join(output_dir, f"{input_filename}_result.mp4")
