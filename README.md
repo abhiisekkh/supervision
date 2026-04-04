@@ -1,41 +1,74 @@
-<div align="center">
-  <p>
-    <a align="center" href="" target="https://supervision.roboflow.com">
-      <img
-        width="100%"
-        src="https://media.roboflow.com/open-source/supervision/rf-supervision-banner.png?updatedAt=1678995927529"
-      >
-    </a>
-  </p>
+# Crowd Flow Analysis Tool
 
-<br>
+Real-time person detection, tracking, and movement analysis for crowd monitoring and flow prediction.
 
-[notebooks](https://github.com/roboflow/notebooks) | [inference](https://github.com/roboflow/inference) | [autodistill](https://github.com/autodistill/autodistill) | [maestro](https://github.com/roboflow/multimodal-maestro)
+## 🎯 Features
 
-<br>
+**Person Detection & Tracking:**
+- YOLOv8 small model for robust person detection
+- ByteTrack for persistent ID tracking across frames
+- Detects small people, children, and partial bodies (confidence threshold: 0.35)
 
-[![version](https://badge.fury.io/py/supervision.svg)](https://badge.fury.io/py/supervision)
-[![downloads](https://img.shields.io/pypi/dm/supervision)](https://pypistats.org/packages/supervision)
-[![license](https://img.shields.io/pypi/l/supervision)](LICENSE.md)
-[![python-version](https://img.shields.io/pypi/pyversions/supervision)](https://badge.fury.io/py/supervision)
-[![codecov](https://codecov.io/gh/roboflow/supervision/graph/badge.svg?token=HMNJ5FVZ36)](https://codecov.io/gh/roboflow/supervision)
+**Movement Visualization:**
+- Arrow vectors showing direction of movement
+- Speed-based color coding:
+  - 🔵 Blue: Stationary/Slow (0-3 px/frame)
+  - 🟢 Green: Normal walking (3-8 px/frame)
+  - 🟡 Yellow: Fast walking (8-15 px/frame)
+  - 🔴 Red: Running (15+ px/frame)
 
-[![snyk](https://snyk.io/advisor/python/supervision/badge.svg)](https://snyk.io/advisor/python/supervision)
-[![colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow/supervision/blob/main/demo.ipynb)
-[![gradio](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/Roboflow/Annotators)
-[![discord](https://img.shields.io/discord/1159501506232451173?logo=discord&label=discord&labelColor=fff&color=5865f2&link=https%3A%2F%2Fdiscord.gg%2FGbfgXGJ8Bk)](https://discord.gg/GbfgXGJ8Bk)
+**Zone Analysis:**
+- Configurable grid zones (2x2, 3x3, 4x4, etc)
+- Real-time people count per zone
+- Congestion status detection (LOW/MEDIUM/HIGH/CRITICAL)
 
-<div align="center">
-    <a href="https://trendshift.io/repositories/124"  target="_blank"><img src="https://trendshift.io/api/badge/repositories/124" alt="roboflow%2Fsupervision | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-  </div>
+**Data Export:**
+- `flow_vectors.csv` with complete tracking data
+- MP4 video with all annotations
+- Organized output folders per input video
 
-</div>
+## 🚀 Quick Start
 
-## 👋 hello
+### Install
+```bash
+cd /Users/abhisekh/Desktop/supervision
+uv sync
+```
 
-**We write your reusable computer vision tools.** Whether you need to load your dataset from your hard drive, draw detections on an image or video, or count how many detections are in a zone. You can count on us! 🤝
+### Run
+```bash
+uv run python detect_people.py
+```
 
-## 💻 install
+Select your video file. Output saved in `./video_name/` folder.
+
+### Output
+```
+video_name/
+├── video_name_result.mp4  (annotated video)
+└── flow_vectors.csv       (ML-ready tracking data)
+```
+
+## ⌨️ Controls
+- **P** - Pause/Resume
+- **Q** - Quit
+
+## 📊 CSV Export (LSTM-Ready)
+
+```csv
+frame,tracker_id,cx,cy,arrow_dx,arrow_dy,speed,direction_degrees,zone_number,congestion_status
+0,1,960,540,-50,20,5.38,158.2,5,LOW
+```
+
+Perfect for Phase 2 machine learning models!
+
+---
+
+## Supervision Library Documentation
+
+This project uses [Roboflow Supervision](https://supervision.roboflow.com).
+
+## 💻 Install Supervision
 
 Pip install the supervision package in a
 [**Python>=3.9**](https://www.python.org/) environment.
@@ -44,9 +77,7 @@ Pip install the supervision package in a
 pip install supervision
 ```
 
-Read more about conda, mamba, and installing from source in our [guide](https://roboflow.github.io/supervision/).
-
-## 🔥 quickstart
+## 🔥 Quickstart
 
 ### models
 
