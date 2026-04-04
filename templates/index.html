@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>People Detection Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 20px;
+        }
+        
+        .video-section {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        
+        .upload-area {
+            padding: 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .upload-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        input[type="file"] {
+            flex: 1;
+            padding: 8px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        select {
+            padding: 8px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+        }
+        
+        button {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            background: black;
+            aspect-ratio: 16/9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        
+        #video {
+            max-width: 100%;
+            max-height: 100%;
+        }
+        
+        .stats-panel {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .stats-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            font-weight: bold;
+            text-align: center;
+        }
+        
+        .stats-content {
+            padding: 20px;
+            flex: 1;
+            overflow-y: auto;
+        }
+        
+        .stat {
+            margin-bottom: 20px;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: bold;
+        }
+        
+        .stat-value {
+            font-size: 28px;
+            color: #667eea;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .zones {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 6px;
+            margin-top: 15px;
+        }
+        
+        .zone-box {
+            background: #f5f5f5;
+            border-radius: 6px;
+            padding: 10px;
+            text-align: center;
+            border: 2px solid #ddd;
+            transition: all 0.2s;
+        }
+        
+        .zone-box.active {
+            background: #ffe0e0;
+            border-color: #ff6b6b;
+        }
+        
+        .zone-label {
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 3px;
+        }
+        
+        .zone-count {
+            font-size: 16px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #999;
+            padding: 20px;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-weight: bold;
+            color: #666;
+        }
+        
+        .status.processing {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+            
+            h1 {
+                font-size: 1.8em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 People Detection Dashboard</h1>
+        
+        <div class="dashboard">
+            <div class="video-section">
+                <div class="upload-area">
+                    <div class="upload-group">
+                        <input type="file" id="fileInput" accept="video/*">
+                        <select id="gridSize">
+                            <option value="2">2x2 Grid</option>
+                            <option value="3" selected>3x3 Grid</option>
+                            <option value="4">4x4 Grid</option>
+                        </select>
+                        <button onclick="uploadVideo()">Upload & Process</button>
+                    </div>
+                </div>
+                
+                <div class="video-container">
+                    <img id="video" src="" style="display: none;">
+                    <div class="loading" id="loading">Select and upload a video to start</div>
+                </div>
+            </div>
+            
+            <div class="stats-panel">
+                <div class="stats-header">Live Statistics</div>
+                
+                <div class="stats-content">
+                    <div class="status" id="status">Ready</div>
+                    
+                    <div class="stat">
+                        <div class="stat-label">Progress</div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progress" style="width: 0%"></div>
+                        </div>
+                        <div class="stat-value" style="font-size: 14px; margin-top: 5px;" id="progressText">0%</div>
+                    </div>
+                    
+                    <div class="stat">
+                        <div class="stat-label">Frame Count</div>
+                        <div class="stat-value"><span id="frameCount">0</span></div>
+                        <div style="font-size: 12px; color: #999;" id="frameTotal">0 total</div>
+                    </div>
+                    
+                    <div class="stat">
+                        <div class="stat-label">Processing FPS</div>
+                        <div class="stat-value"><span id="fps">0</span></div>
+                    </div>
+                    
+                    <div class="stat">
+                        <div class="stat-label">People Detected</div>
+                        <div class="stat-value"><span id="peopleCount">0</span></div>
+                    </div>
+                    
+                    <div class="stat">
+                        <div class="stat-label">Zone Distribution</div>
+                        <div class="zones" id="zones"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let statsInterval = null;
+        let gridSize = 3;
+        
+        function uploadVideo() {
+            const file = document.getElementById('fileInput').files[0];
+            if (!file) {
+                alert('Please select a video');
+                return;
+            }
+            
+            gridSize = parseInt(document.getElementById('gridSize').value);
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('grid_size', gridSize);
+            
+            document.getElementById('status').textContent = 'Processing...';
+            document.getElementById('status').classList.add('processing');
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('video').style.display = 'none';
+            
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => r.json())
+            .catch(e => {
+                console.error('Upload error:', e);
+                document.getElementById('status').textContent = 'Upload failed';
+            });
+            
+            startStreamingVideo();
+            startUpdatingStats();
+        }
+        
+        function startStreamingVideo() {
+            const img = document.getElementById('video');
+            img.src = '/video_feed?t=' + Date.now();
+            img.style.display = 'block';
+            img.onload = function() {
+                document.getElementById('loading').style.display = 'none';
+            };
+        }
+        
+        function startUpdatingStats() {
+            if (statsInterval) clearInterval(statsInterval);
+            
+            statsInterval = setInterval(() => {
+                fetch('/stats')
+                    .then(r => r.json())
+                    .then(data => {
+                        document.getElementById('frameCount').textContent = data.frame_count;
+                        document.getElementById('frameTotal').textContent = data.total_frames + ' total';
+                        document.getElementById('fps').textContent = data.fps;
+                        document.getElementById('peopleCount').textContent = data.people_count;
+                        document.getElementById('progress').style.width = data.progress + '%';
+                        document.getElementById('progressText').textContent = data.progress.toFixed(1) + '%';
+                        
+                        if (!data.running && data.progress === 100) {
+                            document.getElementById('status').textContent = 'Completed ✓';
+                            document.getElementById('status').classList.remove('processing');
+                            clearInterval(statsInterval);
+                        }
+                        
+                        updateZones(data.zone_counts);
+                    });
+            }, 500);
+        }
+        
+        function updateZones(counts) {
+            let zonesHtml = document.getElementById('zones');
+            if (!zonesHtml.children.length) {
+                const numZones = gridSize * gridSize;
+                for (let i = 0; i < numZones; i++) {
+                    const div = document.createElement('div');
+                    div.className = 'zone-box';
+                    div.innerHTML = `<div class="zone-label">Z${i+1}</div><div class="zone-count">0</div>`;
+                    zonesHtml.appendChild(div);
+                }
+            }
+            
+            const boxes = zonesHtml.querySelectorAll('.zone-box');
+            boxes.forEach((box, i) => {
+                const count = counts[i] || 0;
+                box.querySelector('.zone-count').textContent = count;
+                box.classList.toggle('active', count > 0);
+            });
+        }
+    </script>
+</body>
+</html>
