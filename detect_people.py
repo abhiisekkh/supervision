@@ -138,6 +138,12 @@ def process_video(video_path, output_path="output.mp4", grid_size=3):
     model.conf = 0.35
     tracker = sv.ByteTrack()
     
+    input_filename = os.path.splitext(os.path.basename(video_path))[0]
+    output_dir = os.path.join(os.path.dirname(video_path), input_filename)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    final_output_path = os.path.join(output_dir, f"{input_filename}_result.mp4")
+    
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Error: Could not open {video_path}")
@@ -149,10 +155,10 @@ def process_video(video_path, output_path="output.mp4", grid_size=3):
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
     print(f"Resolution: {w}x{h} | FPS: {fps} | Frames: {total}")
-    print(f"Grid: {grid_size}x{grid_size} | Output: {output_path}")
+    print(f"Grid: {grid_size}x{grid_size} | Output dir: {output_dir}")
     
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+    out = cv2.VideoWriter(final_output_path, fourcc, fps, (w, h))
     
     box_annotator = sv.BoxAnnotator(thickness=2)
     label_annotator = sv.LabelAnnotator()
@@ -195,11 +201,11 @@ def process_video(video_path, output_path="output.mp4", grid_size=3):
             
             track_history[int(tracker_id)].append((cx, cy))
             
-            center_x = int(cx)
-            center_y = int(cy)
-            cv2.circle(out_frame, (center_x, center_y), 5, (0, 0, 255), -1)
+            body_center_x = int(cx)
+            body_center_y = int((y1 + y2) / 2)
+            cv2.circle(out_frame, (body_center_x, body_center_y), 5, (0, 0, 255), -1)
             
-            speed, angle = draw_movement_arrow(out_frame, cx, center_y, track_history[int(tracker_id)])
+            speed, angle = draw_movement_arrow(out_frame, cx, int(cy), track_history[int(tracker_id)])
             
             zone_num = get_zone_number(cx, cy, out_frame.shape, grid_size)
             congestion = get_congestion_status(zones[zone_num - 1])
@@ -266,7 +272,7 @@ def process_video(video_path, output_path="output.mp4", grid_size=3):
     out.release()
     cv2.destroyAllWindows()
     
-    csv_path = "flow_vectors.csv"
+    csv_path = os.path.join(output_dir, "flow_vectors.csv")
     if csv_data:
         with open(csv_path, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=['frame', 'tracker_id', 'cx', 'cy', 'arrow_dx', 'arrow_dy', 'speed', 'direction_degrees', 'zone_number', 'congestion_status'])
@@ -277,9 +283,9 @@ def process_video(video_path, output_path="output.mp4", grid_size=3):
     if people_history:
         avg = sum(people_history) / len(people_history)
         mx = max(people_history)
-        print(f"\nDone | Output: {output_path} | Avg people/frame: {avg:.1f} | Max: {mx}")
+        print(f"\nDone | Output: {final_output_path} | Avg people/frame: {avg:.1f} | Max: {mx}")
     else:
-        print(f"\nDone | Output: {output_path}")
+        print(f"\nDone | Output: {final_output_path}")
 
 
 if __name__ == "__main__":
