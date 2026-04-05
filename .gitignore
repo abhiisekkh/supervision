@@ -156,6 +156,9 @@ Desktop.ini
 
 # local data
 data/
+output/
+*.pt
+*.csv
 
 # Claude working scratchpad (plans, lessons, ephemeral artefacts)
 tasks/

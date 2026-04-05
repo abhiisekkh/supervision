@@ -602,7 +602,8 @@ def process_video(
     )
 
     input_filename = os.path.splitext(os.path.basename(video_path))[0]
-    output_dir = os.path.join(os.getcwd(), input_filename)
+    output_root = os.path.join(os.getcwd(), "output")
+    output_dir = os.path.join(output_root, input_filename)
     os.makedirs(output_dir, exist_ok=True)
 
     final_output_name = os.path.basename(output_path) if output_path else f"{input_filename}_result.mp4"
