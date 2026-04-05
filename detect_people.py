@@ -204,7 +204,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--show-labels",
         action="store_true",
-        help="Draw tracker/confidence labels. Disabled by default for a cleaner and slightly faster preview.",
+        help="Append confidence values to output-video ID labels.",
+    )
+    parser.add_argument(
+        "--no-preview",
+        action="store_true",
+        help="Disable the live preview window and only save the final output.",
     )
     return parser.parse_args()
 
@@ -213,6 +218,7 @@ def draw_grid(
     frame: np.ndarray,
     zone_counts: list[int],
     zone_statuses: list[str],
+    zone_tracker_ids: list[list[int]] | None = None,
     grid_size: int = 3,
 ) -> np.ndarray:
     h, w = frame.shape[:2]
@@ -273,6 +279,28 @@ def draw_grid(
                 (255, 255, 255),
                 2,
             )
+            if zone_tracker_ids is not None:
+                ids = zone_tracker_ids[zone_index]
+                if ids:
+                    id_text = ",".join(str(tracker_id) for tracker_id in ids)
+                else:
+                    id_text = "-"
+
+                max_chars = max(8, int((cell_w - 20) / 12))
+                id_chunks = [
+                    id_text[i : i + max_chars] for i in range(0, len(id_text), max_chars)
+                ]
+                for line_index, chunk in enumerate(id_chunks[:3]):
+                    prefix = "IDs:" if line_index == 0 else "    "
+                    cv2.putText(
+                        frame,
+                        f"{prefix} {chunk}",
+                        (x, y + 54 + (line_index * 22)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 255),
+                        1,
+                    )
 
     return frame
 
@@ -564,6 +592,7 @@ def process_video(
     slice_size: int = 960,
     slice_overlap: int = 160,
     show_labels: bool = False,
+    no_preview: bool = False,
 ) -> None:
     model_path = model_path or resolve_default_model()
     print(f"Loading: {video_path}")
@@ -618,6 +647,7 @@ def process_video(
         f"Optical flow scale: {flow_scale:.2f} | interval: {max(1, flow_interval)} | "
         f"slicer: {'ON' if use_slicer else 'OFF'}"
     )
+    print(f"Preview: {'OFF' if no_preview else 'ON'}")
     print(f"Output dir: {output_dir}")
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -683,6 +713,7 @@ def process_video(
         anchor_points = [get_anchor_point(box) for box in people.xyxy]
         zone_counts = count_people_in_zones(anchor_points, frame.shape, grid_size)
         zone_statuses = [get_congestion_status(count) for count in zone_counts]
+        zone_tracker_ids: list[list[int]] = [[] for _ in range(grid_size * grid_size)]
 
         window_start_sec = int(frame_count / fps)
         for zone_number, zone_count in enumerate(zone_counts, start=1):
@@ -706,6 +737,7 @@ def process_video(
             anchor_x, anchor_y = get_anchor_point(box)
             zone_number = get_zone_number(anchor_x, anchor_y, frame.shape, grid_size)
             congestion = zone_statuses[zone_number - 1]
+            zone_tracker_ids[zone_number - 1].append(tracker_id_int)
 
             smoothed_point = append_smoothed_point(
                 smoothed_history[tracker_id_int],
@@ -737,7 +769,10 @@ def process_video(
                 math.degrees(math.atan2(velocity_y, velocity_x)) if speed > 0 else 0.0
             )
 
-            labels.append(f"ID {tracker_id_int} {confidence:.2f}")
+            label_text = f"ID {tracker_id_int}"
+            if show_labels:
+                label_text = f"{label_text} {confidence:.2f}"
+            labels.append(label_text)
             cv2.circle(out_frame, (int(smoothed_point[0]), int(smoothed_point[1])), 5, (0, 0, 255), -1)
             draw_motion_arrow(
                 frame=out_frame,
@@ -814,11 +849,60 @@ def process_video(
                 )
             last_zone_by_tracker[tracker_id_int] = zone_number
 
-        if show_labels and labels:
+        preview_frame = out_frame.copy()
+        preview_frame = draw_grid(
+            preview_frame, zone_counts, zone_statuses, grid_size=grid_size
+        )
+        cv2.putText(
+            preview_frame,
+            f"[{frame_count}/{total}] {(frame_count / total) * 100:.1f}%" if total > 0 else f"[{frame_count}]",
+            (10, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (0, 255, 255),
+            2,
+        )
+        cv2.putText(
+            preview_frame,
+            f"People: {len(people)}",
+            (10, 78),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (0, 255, 255),
+            2,
+        )
+        cv2.putText(
+            preview_frame,
+            f"Model: {os.path.basename(model_path)}",
+            (10, 116),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255, 255, 255),
+            2,
+        )
+        if paused:
+            cv2.putText(
+                preview_frame,
+                "PAUSED (Press P to Resume)",
+                (10, preview_frame.shape[0] - 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.0,
+                (0, 0, 255),
+                2,
+            )
+
+        if labels:
             out_frame = label_annotator.annotate(
                 scene=out_frame, detections=people, labels=labels
             )
-        out_frame = draw_grid(out_frame, zone_counts, zone_statuses, grid_size=grid_size)
+        zone_tracker_ids = [sorted(set(ids)) for ids in zone_tracker_ids]
+        out_frame = draw_grid(
+            out_frame,
+            zone_counts,
+            zone_statuses,
+            zone_tracker_ids=zone_tracker_ids,
+            grid_size=grid_size,
+        )
 
         cv2.putText(
             out_frame,
@@ -859,7 +943,8 @@ def process_video(
                 2,
             )
 
-        cv2.imshow("Live", out_frame)
+        if not no_preview:
+            cv2.imshow("Live", preview_frame)
 
         if not paused:
             out.write(out_frame)
@@ -885,16 +970,17 @@ def process_video(
         else:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_count)
 
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q") or key == ord("Q") or key == 27:
-            print("Stopped")
-            break
-        if key == ord("p") or key == ord("P"):
-            paused = not paused
-            if paused:
-                print("  PAUSED - Press 'p' to resume")
-            else:
-                print("  RESUMED")
+        if not no_preview:
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q") or key == ord("Q") or key == 27:
+                print("Stopped")
+                break
+            if key == ord("p") or key == ord("P"):
+                paused = not paused
+                if paused:
+                    print("  PAUSED - Press 'p' to resume")
+                else:
+                    print("  RESUMED")
 
     cap.release()
     out.release()
@@ -969,6 +1055,7 @@ def process_video(
         "slice_size": slice_size,
         "slice_overlap": slice_overlap,
         "show_labels": show_labels,
+        "no_preview": no_preview,
     }
     with open(metadata_path, "w") as handle:
         json.dump(metadata, handle, indent=2)
@@ -1041,4 +1128,5 @@ if __name__ == "__main__":
         slice_size=args.slice_size,
         slice_overlap=args.slice_overlap,
         show_labels=args.show_labels,
+        no_preview=args.no_preview,
     )
