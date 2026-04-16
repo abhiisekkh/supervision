@@ -631,7 +631,7 @@ def process_video(
     )
 
     input_filename = os.path.splitext(os.path.basename(video_path))[0]
-    output_root = os.path.join(os.getcwd(), "output")
+    output_root = os.path.join(os.getcwd(), "output", "phase1_processed")
     output_dir = os.path.join(output_root, input_filename)
     os.makedirs(output_dir, exist_ok=True)
 

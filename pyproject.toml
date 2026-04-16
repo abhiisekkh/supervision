@@ -62,6 +62,9 @@ dependencies = [
 optional-dependencies.metrics = [
   "pandas>=2",
 ]
+optional-dependencies.forecasting = [
+  "torch>=2.11",
+]
 urls.Documentation = "https://supervision.roboflow.com/latest/"
 urls.Homepage = "https://github.com/roboflow/supervision"
 urls.Repository = "https://github.com/roboflow/supervision"
