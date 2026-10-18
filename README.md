@@ -1,8 +1,13 @@
 # Predictive Modeling for Crowd Flow Analysis and Congestion Detection in Large Public Gatherings
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://crowd-flow-analysis.streamlit.app)
+
 An end-to-end computer vision and spatio-temporal deep learning platform designed to extract crowd flow vectors, track individual movement trajectories, and predict localized congestion spikes ahead of time.
 
+> **Live Deployed Web Application:** [https://crowd-flow-analysis.streamlit.app](https://crowd-flow-analysis.streamlit.app)
+
 ---
+
 
 ## Quick Start
 
