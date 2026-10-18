@@ -8,6 +8,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from phase2_lstm_train import (
+    AttentionEncoderDecoderLSTM,
     EncoderDecoderLSTM,
     FEATURE_NAMES,
     SequenceDataset,
@@ -90,13 +91,28 @@ def main() -> None:
     )
     loader = DataLoader(dataset, batch_size=32, shuffle=False)
 
-    model = EncoderDecoderLSTM(
-        input_size=len(FEATURE_NAMES),
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        dropout=dropout,
-        prediction_horizon=predict_seconds,
-    ).to(device)
+    model_type = checkpoint.get("model_type", config.get("model_type", "original"))
+    use_attention = model_type == "attention" or config.get("use_attention", False)
+
+    if use_attention:
+        print(f"Loading AttentionEncoderDecoderLSTM from checkpoint")
+        model = AttentionEncoderDecoderLSTM(
+            input_size=len(FEATURE_NAMES),
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout,
+            prediction_horizon=predict_seconds,
+            num_attention_heads=4,
+        ).to(device)
+    else:
+        print(f"Loading EncoderDecoderLSTM from checkpoint")
+        model = EncoderDecoderLSTM(
+            input_size=len(FEATURE_NAMES),
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout,
+            prediction_horizon=predict_seconds,
+        ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 

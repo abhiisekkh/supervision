@@ -107,6 +107,8 @@ class SequenceDataset(Dataset):
 
 
 class EncoderDecoderLSTM(nn.Module):
+    """Original encoder-decoder LSTM (kept for backward checkpoint compatibility)."""
+
     def __init__(
         self,
         input_size: int,
@@ -158,6 +160,175 @@ class EncoderDecoderLSTM(nn.Module):
         return torch.cat(outputs, dim=1).squeeze(-1)
 
 
+class AttentionEncoderDecoderLSTM(nn.Module):
+    """Enhanced LSTM with bidirectional encoder, multi-head attention, layer
+    normalization, and residual connections for maximum accuracy."""
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        num_layers: int,
+        dropout: float,
+        prediction_horizon: int,
+        num_attention_heads: int = 4,
+    ) -> None:
+        super().__init__()
+        self.prediction_horizon = prediction_horizon
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+
+        # Input projection with layer norm
+        self.input_projection = nn.Sequential(
+            nn.Linear(input_size, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.5),
+        )
+
+        # Bidirectional encoder
+        self.encoder = nn.LSTM(
+            input_size=hidden_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+            bidirectional=True,
+        )
+        self.encoder_norm = nn.LayerNorm(hidden_size * 2)
+
+        # Project bidirectional encoder output to decoder hidden size
+        self.encoder_projection = nn.Linear(hidden_size * 2, hidden_size)
+        self.hidden_projection = nn.Linear(hidden_size * 2, hidden_size)
+        self.cell_projection = nn.Linear(hidden_size * 2, hidden_size)
+
+        # Decoder
+        self.decoder = nn.LSTM(
+            input_size=1 + hidden_size,  # prediction + context from attention
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+        )
+        self.decoder_norm = nn.LayerNorm(hidden_size)
+
+        # Multi-head attention
+        self.attention = nn.MultiheadAttention(
+            embed_dim=hidden_size,
+            num_heads=num_attention_heads,
+            dropout=dropout * 0.5,
+            batch_first=True,
+        )
+        self.attention_norm = nn.LayerNorm(hidden_size)
+
+        # Output layers with residual
+        self.output_mlp = nn.Sequential(
+            nn.Linear(hidden_size * 2, hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.5),
+            nn.Linear(hidden_size, 1),
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        target: torch.Tensor | None = None,
+        teacher_forcing_ratio: float = 0.0,
+    ) -> torch.Tensor:
+        batch_size = x.shape[0]
+
+        # Project input features
+        x_projected = self.input_projection(x)
+
+        # Bidirectional encoder
+        encoder_outputs, (hidden, cell) = self.encoder(x_projected)
+        encoder_outputs = self.encoder_norm(encoder_outputs)
+
+        # Project encoder outputs for attention keys/values
+        encoder_projected = self.encoder_projection(encoder_outputs)
+
+        # Merge bidirectional hidden states for decoder init
+        # hidden shape: (num_layers*2, batch, hidden) -> (num_layers, batch, hidden)
+        hidden_fwd = hidden[0::2]  # forward layers
+        hidden_bwd = hidden[1::2]  # backward layers
+        hidden_merged = self.hidden_projection(
+            torch.cat([hidden_fwd, hidden_bwd], dim=-1)
+        )
+
+        cell_fwd = cell[0::2]
+        cell_bwd = cell[1::2]
+        cell_merged = self.cell_projection(
+            torch.cat([cell_fwd, cell_bwd], dim=-1)
+        )
+
+        # Decoder auto-regressive loop
+        decoder_hidden = hidden_merged
+        decoder_cell = cell_merged
+        decoder_input_val = x[:, -1:, 0:1]  # last avg_people_count
+        outputs: list[torch.Tensor] = []
+
+        for step in range(self.prediction_horizon):
+            # Attention: query = previous decoder hidden (top layer)
+            query = decoder_hidden[-1:].permute(1, 0, 2)  # (batch, 1, hidden)
+            context, _ = self.attention(
+                query, encoder_projected, encoder_projected
+            )
+            context = self.attention_norm(context + query)  # residual
+
+            # Concatenate prediction input with attention context
+            decoder_in = torch.cat(
+                [decoder_input_val, context], dim=-1
+            )  # (batch, 1, 1+hidden)
+
+            decoder_output, (decoder_hidden, decoder_cell) = self.decoder(
+                decoder_in, (decoder_hidden, decoder_cell)
+            )
+            decoder_output = self.decoder_norm(decoder_output)
+
+            # Output with residual from context
+            combined = torch.cat([decoder_output, context], dim=-1)
+            step_prediction = self.output_mlp(combined)  # (batch, 1, 1)
+            outputs.append(step_prediction)
+
+            if target is not None and random.random() < teacher_forcing_ratio:
+                decoder_input_val = target[:, step : step + 1].unsqueeze(-1)
+            else:
+                decoder_input_val = step_prediction
+
+        return torch.cat(outputs, dim=1).squeeze(-1)
+
+
+class EMAModel:
+    """Exponential Moving Average of model parameters for better generalization."""
+
+    def __init__(self, model: nn.Module, decay: float = 0.999) -> None:
+        self.decay = decay
+        self.shadow: dict[str, torch.Tensor] = {}
+        self.backup: dict[str, torch.Tensor] = {}
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = param.data.clone()
+
+    def update(self, model: nn.Module) -> None:
+        for name, param in model.named_parameters():
+            if param.requires_grad and name in self.shadow:
+                self.shadow[name].mul_(self.decay).add_(
+                    param.data, alpha=1.0 - self.decay
+                )
+
+    def apply_shadow(self, model: nn.Module) -> None:
+        for name, param in model.named_parameters():
+            if param.requires_grad and name in self.shadow:
+                self.backup[name] = param.data.clone()
+                param.data.copy_(self.shadow[name])
+
+    def restore(self, model: nn.Module) -> None:
+        for name, param in model.named_parameters():
+            if param.requires_grad and name in self.backup:
+                param.data.copy_(self.backup[name])
+        self.backup = {}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Phase 2 LSTM Seq2Seq training for crowd-flow forecasting."
@@ -171,13 +342,13 @@ def parse_args() -> argparse.Namespace:
         "--lookback-seconds",
         type=int,
         default=30,
-        help="Number of previous zone windows used as input sequence length.",
+        help="Number of previous zone windows used as input sequence length (more=better context).",
     )
     parser.add_argument(
         "--predict-seconds",
         type=int,
         default=10,
-        help="Number of future zone windows predicted by the model.",
+        help="Number of future zone windows predicted by the model (prediction horizon).",
     )
     parser.add_argument(
         "--train-ratio",
@@ -200,32 +371,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--epochs",
         type=int,
-        default=40,
-        help="Maximum training epochs.",
+        default=100,
+        help="Maximum training epochs (more epochs with early stopping for best convergence).",
     )
     parser.add_argument(
         "--learning-rate",
         type=float,
-        default=1e-3,
-        help="Adam learning rate.",
+        default=5e-4,
+        help="AdamW learning rate (lower for attention model stability).",
     )
     parser.add_argument(
         "--hidden-size",
         type=int,
-        default=64,
-        help="LSTM hidden size.",
+        default=128,
+        help="LSTM hidden size (larger capacity for attention model).",
     )
     parser.add_argument(
         "--num-layers",
         type=int,
-        default=2,
-        help="Number of LSTM layers.",
+        default=3,
+        help="Number of LSTM layers (deeper network with attention).",
     )
     parser.add_argument(
         "--dropout",
         type=float,
-        default=0.2,
-        help="Dropout used inside stacked LSTMs.",
+        default=0.3,
+        help="Dropout used inside stacked LSTMs (higher for regularization).",
     )
     parser.add_argument(
         "--teacher-forcing",
@@ -236,8 +407,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--patience",
         type=int,
-        default=8,
-        help="Early stopping patience on validation MAE.",
+        default=15,
+        help="Early stopping patience on validation MAE (longer for thorough exploration).",
     )
     parser.add_argument(
         "--seed",
@@ -254,6 +425,30 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         default="output/phase2_training/phase2_lstm",
         help="Directory for checkpoints, metrics, and predictions.",
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=1e-4,
+        help="AdamW weight decay for regularization.",
+    )
+    parser.add_argument(
+        "--use-attention",
+        action="store_true",
+        default=True,
+        help="Use the enhanced attention-based LSTM model (default: True).",
+    )
+    parser.add_argument(
+        "--no-attention",
+        action="store_true",
+        default=False,
+        help="Use the original encoder-decoder LSTM instead of attention model.",
+    )
+    parser.add_argument(
+        "--ema-decay",
+        type=float,
+        default=0.999,
+        help="Exponential moving average decay for model weights.",
     )
     return parser.parse_args()
 
@@ -725,15 +920,41 @@ def main() -> None:
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-    model = EncoderDecoderLSTM(
-        input_size=len(FEATURE_NAMES),
-        hidden_size=args.hidden_size,
-        num_layers=args.num_layers,
-        dropout=args.dropout,
-        prediction_horizon=args.predict_seconds,
-    ).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
-    loss_fn = nn.MSELoss()
+    use_attention = args.use_attention and not args.no_attention
+    if use_attention:
+        print("Using AttentionEncoderDecoderLSTM (bidirectional + multi-head attention)")
+        model = AttentionEncoderDecoderLSTM(
+            input_size=len(FEATURE_NAMES),
+            hidden_size=args.hidden_size,
+            num_layers=args.num_layers,
+            dropout=args.dropout,
+            prediction_horizon=args.predict_seconds,
+            num_attention_heads=4,
+        ).to(device)
+    else:
+        print("Using original EncoderDecoderLSTM")
+        model = EncoderDecoderLSTM(
+            input_size=len(FEATURE_NAMES),
+            hidden_size=args.hidden_size,
+            num_layers=args.num_layers,
+            dropout=args.dropout,
+            prediction_horizon=args.predict_seconds,
+        ).to(device)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Model parameters: {total_params:,} total, {trainable_params:,} trainable")
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=args.learning_rate,
+        weight_decay=args.weight_decay,
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=10, T_mult=2, eta_min=1e-6
+    )
+    loss_fn = nn.HuberLoss(delta=1.0)
+    ema = EMAModel(model, decay=args.ema_decay)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -756,6 +977,11 @@ def main() -> None:
             device=device,
             teacher_forcing_ratio=teacher_forcing_ratio,
         )
+        ema.update(model)
+        scheduler.step()
+
+        # Evaluate with EMA weights for more stable validation
+        ema.apply_shadow(model)
         val_loss, val_pred, val_target, _val_meta = run_epoch(
             model=model,
             loader=val_loader,
@@ -764,6 +990,7 @@ def main() -> None:
             device=device,
             teacher_forcing_ratio=0.0,
         )
+        ema.restore(model)
 
         train_pred_unscaled = sanitize_count_predictions(
             invert_scale(train_pred, target_mean, target_std)
@@ -777,6 +1004,7 @@ def main() -> None:
         train_metrics = evaluate_counts(train_pred_unscaled, train_target_unscaled)
         val_metrics = evaluate_counts(val_pred_unscaled, val_target_unscaled)
 
+        current_lr = optimizer.param_groups[0]["lr"]
         history_rows.append(
             {
                 "epoch": epoch,
@@ -787,12 +1015,24 @@ def main() -> None:
                 "train_rmse": round(train_metrics["rmse"], 6),
                 "val_rmse": round(val_metrics["rmse"], 6),
                 "teacher_forcing_ratio": round(teacher_forcing_ratio, 4),
+                "learning_rate": round(current_lr, 8),
             }
         )
+
+        if epoch % 5 == 0 or epoch == 1:
+            print(
+                f"  Epoch {epoch:3d}/{args.epochs} | "
+                f"train_mae={train_metrics['mae']:.4f} val_mae={val_metrics['mae']:.4f} | "
+                f"train_acc={train_metrics['congestion_accuracy']:.3f} "
+                f"val_acc={val_metrics['congestion_accuracy']:.3f} | "
+                f"lr={current_lr:.2e}"
+            )
 
         if val_metrics["mae"] < best_val_mae:
             best_val_mae = val_metrics["mae"]
             patience_counter = 0
+            # Save EMA weights as best (they generalize better)
+            ema.apply_shadow(model)
             best_state = {
                 "model_state_dict": model.state_dict(),
                 "feature_mean": feature_mean.tolist(),
@@ -800,11 +1040,15 @@ def main() -> None:
                 "target_mean": target_mean,
                 "target_std": target_std,
                 "config": vars(args),
+                "model_type": "attention" if use_attention else "original",
             }
             torch.save(best_state, checkpoint_path)
+            ema.restore(model)
+            print(f"  *** New best val MAE: {best_val_mae:.4f} (saved) ***")
         else:
             patience_counter += 1
             if patience_counter >= args.patience:
+                print(f"  Early stopping at epoch {epoch} (patience={args.patience})")
                 break
 
     if best_state is None:
@@ -840,6 +1084,7 @@ def main() -> None:
             "train_rmse",
             "val_rmse",
             "teacher_forcing_ratio",
+            "learning_rate",
         ],
         history_rows,
     )
@@ -863,6 +1108,9 @@ def main() -> None:
     metrics = {
         "config": vars(args),
         "device": str(device),
+        "model_type": "attention" if use_attention else "original",
+        "total_parameters": total_params,
+        "trainable_parameters": trainable_params,
         "dataset": {
             "zone_rows": len(rows),
             "total_sequences": len(samples),
@@ -889,15 +1137,23 @@ def main() -> None:
     with open(metrics_path, "w") as handle:
         json.dump(metrics, handle, indent=2)
 
-    print(f"LSTM checkpoint: {checkpoint_path}")
-    print(f"LSTM history: {history_path}")
-    print(f"LSTM predictions: {predictions_path}")
-    print(f"LSTM metrics: {metrics_path}")
+    print(f"\n{'='*60}")
+    print(f"LSTM TRAINING COMPLETE")
+    print(f"{'='*60}")
+    print(f"Model type: {'Attention LSTM' if use_attention else 'Original LSTM'}")
+    print(f"Parameters: {trainable_params:,}")
+    print(f"Checkpoint: {checkpoint_path}")
+    print(f"History: {history_path}")
+    print(f"Predictions: {predictions_path}")
+    print(f"Metrics: {metrics_path}")
+    print(f"{'='*60}")
     print(
-        f"Best validation MAE: {best_val_mae:.3f} | "
-        f"Test MAE: {test_metrics['mae']:.3f} | "
-        f"Test congestion accuracy: {test_metrics['congestion_accuracy']:.3f}"
+        f"Best validation MAE: {best_val_mae:.4f} | "
+        f"Test MAE: {test_metrics['mae']:.4f} | "
+        f"Test RMSE: {test_metrics['rmse']:.4f} | "
+        f"Test congestion accuracy: {test_metrics['congestion_accuracy']:.4f}"
     )
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":

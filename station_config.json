@@ -1,0 +1,53 @@
+{
+  "version": "1.0.0",
+  "facility_type": "transit_station",
+  "description": "Spatial calibration profiles for Metro and Railway transit stations to map 3x3 camera grid to physical safety thresholds.",
+  "default_profile": "metro_concourse",
+  "profiles": {
+    "metro_concourse": {
+      "name": "Metro Concourse & Turnstile Hall",
+      "free_flow_velocity_px_s": 85.0,
+      "zone_mappings": {
+        "1": {"name": "Entry Corridor North", "type": "corridor", "capacity": 25, "critical_density": 0.85},
+        "2": {"name": "Turnstile Banks (Ingress)", "type": "chokepoint", "capacity": 12, "critical_density": 0.75},
+        "3": {"name": "Entry Corridor East", "type": "corridor", "capacity": 25, "critical_density": 0.85},
+        "4": {"name": "Ticket Vending & Queue Area", "type": "holding_area", "capacity": 30, "critical_density": 0.80},
+        "5": {"name": "Central Concourse Hub", "type": "open_flow", "capacity": 45, "critical_density": 0.90},
+        "6": {"name": "Information / Security Desk", "type": "holding_area", "capacity": 20, "critical_density": 0.75},
+        "7": {"name": "Stairwell 1 Approach", "type": "egress_corridor", "capacity": 18, "critical_density": 0.70},
+        "8": {"name": "Escalator 1 Landing Zone", "type": "critical_chokepoint", "capacity": 8, "critical_density": 0.65},
+        "9": {"name": "Platform Ingress Passageway", "type": "egress_corridor", "capacity": 20, "critical_density": 0.75}
+      }
+    },
+    "subway_platform": {
+      "name": "Subway Platform & Boarding Area",
+      "free_flow_velocity_px_s": 65.0,
+      "zone_mappings": {
+        "1": {"name": "Platform Edge (Car 1-2)", "type": "safety_hazard_zone", "capacity": 10, "critical_density": 0.60},
+        "2": {"name": "Central Boarding Area", "type": "platform_center", "capacity": 25, "critical_density": 0.75},
+        "3": {"name": "Platform Edge (Car 3-4)", "type": "safety_hazard_zone", "capacity": 10, "critical_density": 0.60},
+        "4": {"name": "Waiting Benches West", "type": "waiting_area", "capacity": 15, "critical_density": 0.80},
+        "5": {"name": "Central Thoroughfare", "type": "open_flow", "capacity": 35, "critical_density": 0.85},
+        "6": {"name": "Waiting Benches East", "type": "waiting_area", "capacity": 15, "critical_density": 0.80},
+        "7": {"name": "Escalator Exit Base", "type": "critical_chokepoint", "capacity": 7, "critical_density": 0.60},
+        "8": {"name": "Emergency Exit Stairwell", "type": "egress_corridor", "capacity": 12, "critical_density": 0.70},
+        "9": {"name": "Elevator Boarding Zone", "type": "chokepoint", "capacity": 10, "critical_density": 0.70}
+      }
+    },
+    "outdoor_interchange_plaza": {
+      "name": "Station Forecourt / Bus Interchange",
+      "free_flow_velocity_px_s": 100.0,
+      "zone_mappings": {
+        "1": {"name": "Bus Bay 1 Queue", "type": "queue_lane", "capacity": 25, "critical_density": 0.80},
+        "2": {"name": "Main Station Gate Entrance", "type": "chokepoint", "capacity": 30, "critical_density": 0.85},
+        "3": {"name": "Bus Bay 2 Queue", "type": "queue_lane", "capacity": 25, "critical_density": 0.80},
+        "4": {"name": "Plaza Walkway West", "type": "open_flow", "capacity": 45, "critical_density": 0.90},
+        "5": {"name": "Central Pedestrian Plaza", "type": "open_flow", "capacity": 60, "critical_density": 0.90},
+        "6": {"name": "Plaza Walkway East", "type": "open_flow", "capacity": 45, "critical_density": 0.90},
+        "7": {"name": "Taxi Drop-off Walkway", "type": "corridor", "capacity": 20, "critical_density": 0.80},
+        "8": {"name": "Station South Ingress Ramp", "type": "chokepoint", "capacity": 25, "critical_density": 0.80},
+        "9": {"name": "Bicycle & Scooter Hub", "type": "open_flow", "capacity": 20, "critical_density": 0.85}
+      }
+    }
+  }
+}

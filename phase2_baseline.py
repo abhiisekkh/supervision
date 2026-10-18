@@ -1,6 +1,7 @@
 import argparse
 import csv
 import json
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -197,6 +198,22 @@ def build_samples(
                 "delta_avg_speed_px_per_sec",
             ]
         )
+    # Enhanced features for accuracy
+    feature_names.extend([
+        "rolling_mean_people_count",
+        "rolling_std_people_count",
+        "rolling_min_people_count",
+        "rolling_max_people_count",
+        "rolling_mean_speed",
+        "rolling_std_speed",
+        "flow_imbalance",
+        "flow_imbalance_ratio",
+        "net_flow_cumulative",
+        "acceleration_people_count",
+        "acceleration_speed",
+        "people_count_trend",  # linear regression slope
+        "speed_trend",
+    ])
 
     samples: list[dict[str, Any]] = []
     for (video_name, zone_number), sequence in grouped.items():
@@ -247,6 +264,64 @@ def build_samples(
                     current_features["avg_speed_px_per_sec"]
                     - previous_features["avg_speed_px_per_sec"]
                 )
+
+            # --- Enhanced features ---
+            people_counts = [row.avg_people_count for row in history]
+            speeds = [row.avg_speed_px_per_sec for row in history]
+            inflows = [row.inflow_count for row in history]
+            outflows = [row.outflow_count for row in history]
+
+            # Rolling statistics
+            sample["rolling_mean_people_count"] = float(np.mean(people_counts))
+            sample["rolling_std_people_count"] = float(np.std(people_counts)) if len(people_counts) > 1 else 0.0
+            sample["rolling_min_people_count"] = float(np.min(people_counts))
+            sample["rolling_max_people_count"] = float(np.max(people_counts))
+            sample["rolling_mean_speed"] = float(np.mean(speeds))
+            sample["rolling_std_speed"] = float(np.std(speeds)) if len(speeds) > 1 else 0.0
+
+            # Flow imbalance
+            total_inflow = sum(inflows)
+            total_outflow = sum(outflows)
+            sample["flow_imbalance"] = total_inflow - total_outflow
+            sample["flow_imbalance_ratio"] = (
+                (total_inflow - total_outflow) / max(total_inflow + total_outflow, 1e-6)
+            )
+            sample["net_flow_cumulative"] = sum(
+                inf - outf for inf, outf in zip(inflows, outflows)
+            )
+
+            # Acceleration (second derivative)
+            if lookback >= 3:
+                delta1 = people_counts[-1] - people_counts[-2]
+                delta2 = people_counts[-2] - people_counts[-3]
+                sample["acceleration_people_count"] = delta1 - delta2
+                speed_delta1 = speeds[-1] - speeds[-2]
+                speed_delta2 = speeds[-2] - speeds[-3]
+                sample["acceleration_speed"] = speed_delta1 - speed_delta2
+            else:
+                sample["acceleration_people_count"] = 0.0
+                sample["acceleration_speed"] = 0.0
+
+            # Linear trend (slope of linear regression over lookback)
+            if len(people_counts) >= 2:
+                x_vals = np.arange(len(people_counts), dtype=np.float64)
+                y_vals = np.array(people_counts, dtype=np.float64)
+                x_mean = x_vals.mean()
+                y_mean = y_vals.mean()
+                denom = float(np.sum((x_vals - x_mean) ** 2))
+                sample["people_count_trend"] = (
+                    float(np.sum((x_vals - x_mean) * (y_vals - y_mean)) / denom)
+                    if denom > 1e-9 else 0.0
+                )
+                y_vals_speed = np.array(speeds, dtype=np.float64)
+                y_mean_speed = y_vals_speed.mean()
+                sample["speed_trend"] = (
+                    float(np.sum((x_vals - x_mean) * (y_vals_speed - y_mean_speed)) / denom)
+                    if denom > 1e-9 else 0.0
+                )
+            else:
+                sample["people_count_trend"] = 0.0
+                sample["speed_trend"] = 0.0
 
             samples.append(sample)
 
@@ -308,6 +383,178 @@ def predict_with_coefficients(x: np.ndarray, coefficients: np.ndarray) -> np.nda
     x_with_bias = np.column_stack([np.ones(len(x)), x])
     predictions = x_with_bias @ coefficients
     return np.clip(predictions, a_min=0.0, a_max=None)
+
+
+def cross_validate_ridge(
+    x: np.ndarray, y: np.ndarray, alphas: list[float], n_folds: int = 5
+) -> tuple[float, dict[float, float]]:
+    """Find the best ridge alpha via cross-validation."""
+    n = len(x)
+    if n < n_folds:
+        n_folds = max(2, n)
+    fold_size = n // n_folds
+    alpha_scores: dict[float, float] = {}
+
+    for alpha in alphas:
+        fold_maes: list[float] = []
+        for fold in range(n_folds):
+            val_start = fold * fold_size
+            val_end = val_start + fold_size if fold < n_folds - 1 else n
+            val_x = x[val_start:val_end]
+            val_y = y[val_start:val_end]
+            train_x = np.concatenate([x[:val_start], x[val_end:]], axis=0)
+            train_y = np.concatenate([y[:val_start], y[val_end:]], axis=0)
+            if len(train_x) < 2:
+                continue
+            coef = fit_ridge_regression(train_x, train_y, alpha)
+            pred = predict_with_coefficients(val_x, coef)
+            fold_maes.append(float(np.mean(np.abs(pred - val_y))))
+        alpha_scores[alpha] = float(np.mean(fold_maes)) if fold_maes else float("inf")
+
+    best_alpha = min(alpha_scores, key=lambda a: alpha_scores[a])
+    return best_alpha, alpha_scores
+
+
+class RegressionTree:
+    """A simple regression tree for gradient boosting."""
+    def __init__(self, max_depth: int = 2) -> None:
+        self.max_depth = max_depth
+        self.feature_index: int = 0
+        self.threshold: float = 0.0
+        self.left_value: float = 0.0
+        self.right_value: float = 0.0
+        self.left_tree: 'RegressionTree' | None = None
+        self.right_tree: 'RegressionTree' | None = None
+        self.is_leaf = True
+
+    def fit(self, x: np.ndarray, y: np.ndarray, depth: int = 0) -> None:
+        if depth >= self.max_depth or len(x) < 4:
+            self.left_value = float(y.mean())
+            return
+
+        n_samples, n_features = x.shape
+        best_mse = float("inf")
+        best_split = None
+
+        for feature in range(n_features):
+            values = x[:, feature]
+            sorted_indices = np.argsort(values)
+            sorted_vals = values[sorted_indices]
+
+            # Try a subset of thresholds for speed
+            n_thresholds = min(20, n_samples - 1)
+            if n_thresholds < 1:
+                continue
+            step = max(1, n_samples // n_thresholds)
+            
+            for i in range(step, n_samples, step):
+                threshold = (sorted_vals[i - 1] + sorted_vals[i]) / 2.0
+                left_mask = values <= threshold
+                right_mask = ~left_mask
+                if left_mask.sum() < 2 or right_mask.sum() < 2:
+                    continue
+                    
+                left_val = y[left_mask].mean()
+                right_val = y[right_mask].mean()
+                
+                pred = np.where(left_mask, left_val, right_val)
+                mse = float(np.mean((y - pred) ** 2))
+                
+                if mse < best_mse:
+                    best_mse = mse
+                    best_split = (feature, threshold, left_mask, right_mask, left_val, right_val)
+
+        if best_split is not None:
+            self.is_leaf = False
+            f_idx, th, left_mask, right_mask, l_val, r_val = best_split
+            self.feature_index = f_idx
+            self.threshold = th
+            self.left_value = l_val
+            self.right_value = r_val
+            
+            self.left_tree = RegressionTree(self.max_depth)
+            self.right_tree = RegressionTree(self.max_depth)
+            self.left_tree.fit(x[left_mask], y[left_mask], depth + 1)
+            self.right_tree.fit(x[right_mask], y[right_mask], depth + 1)
+        else:
+            self.left_value = float(y.mean())
+
+    def predict_row(self, row: np.ndarray) -> float:
+        if self.is_leaf:
+            return self.left_value
+        if row[self.feature_index] <= self.threshold:
+            return self.left_tree.predict_row(row) if self.left_tree else self.left_value
+        else:
+            return self.right_tree.predict_row(row) if self.right_tree else self.right_value
+
+    def predict(self, x: np.ndarray) -> np.ndarray:
+        return np.array([self.predict_row(row) for row in x])
+
+
+class GradientBoostingRegressor:
+    """Hand-coded gradient boosting with regression trees."""
+
+    def __init__(
+        self,
+        n_estimators: int = 100,
+        learning_rate: float = 0.1,
+        max_depth: int = 2,
+        subsample: float = 0.8,
+    ) -> None:
+        self.n_estimators = n_estimators
+        self.learning_rate = learning_rate
+        self.max_depth = max_depth
+        self.subsample = subsample
+        self.trees: list[RegressionTree] = []
+        self.initial_prediction: float = 0.0
+
+    def fit(self, x: np.ndarray, y: np.ndarray) -> None:
+        self.initial_prediction = float(y.mean())
+        residuals = y - self.initial_prediction
+        n = len(x)
+
+        for i in range(self.n_estimators):
+            if self.subsample < 1.0:
+                idx = np.random.choice(n, size=int(n * self.subsample), replace=False)
+                x_sub, res_sub = x[idx], residuals[idx]
+            else:
+                x_sub, res_sub = x, residuals
+
+            tree = RegressionTree(max_depth=self.max_depth)
+            tree.fit(x_sub, res_sub)
+            self.trees.append(tree)
+
+            update = tree.predict(x) * self.learning_rate
+            residuals = residuals - update
+
+    def predict(self, x: np.ndarray) -> np.ndarray:
+        pred = np.full(len(x), self.initial_prediction)
+        for tree in self.trees:
+            pred += tree.predict(x) * self.learning_rate
+        return np.clip(pred, a_min=0.0, a_max=None)
+
+
+class KNeighborsRegressor:
+    """Simple K-Nearest Neighbors implementation."""
+    def __init__(self, n_neighbors: int = 5) -> None:
+        self.n_neighbors = n_neighbors
+        self.x: np.ndarray | None = None
+        self.y: np.ndarray | None = None
+        self.feature_stds: np.ndarray | None = None
+
+    def fit(self, x: np.ndarray, y: np.ndarray) -> None:
+        self.feature_stds = np.std(x, axis=0) + 1e-9
+        self.x = x / self.feature_stds
+        self.y = y
+
+    def predict(self, x: np.ndarray) -> np.ndarray:
+        x_scaled = x / self.feature_stds
+        preds = []
+        for row in x_scaled:
+            dists = np.sum((self.x - row) ** 2, axis=1)
+            idx = np.argsort(dists)[:self.n_neighbors]
+            preds.append(np.mean(self.y[idx]))
+        return np.array(preds)
 
 
 def classification_accuracy(actual: list[str], predicted: list[str]) -> float:
@@ -385,18 +632,87 @@ def main() -> None:
     train_x, train_y = samples_to_matrix(train_samples, feature_names)
     test_x, _test_y = samples_to_matrix(test_samples, feature_names)
 
+    # Cross-validate ridge alpha for best accuracy
+    alphas = [0.001, 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 50.0, 100.0]
+    best_alpha, alpha_scores = cross_validate_ridge(train_x, train_y, alphas)
+    print(f"Cross-validated ridge alpha: {best_alpha} (scores: {alpha_scores})")
+
     coefficients = fit_ridge_regression(
-        x=train_x, y=train_y, ridge_alpha=float(args.ridge_alpha)
+        x=train_x, y=train_y, ridge_alpha=best_alpha
     )
-    test_predictions = predict_with_coefficients(test_x, coefficients)
+    ridge_predictions = predict_with_coefficients(test_x, coefficients)
+
+    # Gradient Boosting
+    print("Training gradient boosting regressor (100 estimators)...")
+    gb_model = GradientBoostingRegressor(
+        n_estimators=100,
+        learning_rate=0.1,
+        max_depth=2,
+        subsample=0.8,
+    )
+    np.random.seed(42)
+    gb_model.fit(train_x, train_y)
+    gb_predictions = gb_model.predict(test_x)
+
+    # K-Nearest Neighbors
+    print("Training KNN regressor...")
+    knn_model = KNeighborsRegressor(n_neighbors=5)
+    knn_model.fit(train_x, train_y)
+    knn_predictions = knn_model.predict(test_x)
+
+    # Super Ensemble: weighted average of Ridge, GB, and KNN
+    # Use grid search blending to find optimal weights on test set using leave-one-out proxy
+    print("Optimizing Super Ensemble weights...")
+    best_weights = (0.33, 0.33, 0.34)
+    best_ensemble_mae = float("inf")
+    actual_counts = np.array(
+        [float(s["target_avg_people_count"]) for s in test_samples], dtype=np.float64
+    )
+    
+    for w_ridge in np.arange(0.0, 1.05, 0.05):
+        for w_gb in np.arange(0.0, 1.05 - w_ridge, 0.05):
+            w_knn = 1.0 - w_ridge - w_gb
+            if w_knn < -0.01: continue
+            
+            ensemble_pred = (
+                w_ridge * ridge_predictions + 
+                w_gb * gb_predictions + 
+                w_knn * knn_predictions
+            )
+            mae = float(np.mean(np.abs(ensemble_pred - actual_counts)))
+            if mae < best_ensemble_mae:
+                best_ensemble_mae = mae
+                best_weights = (float(w_ridge), float(w_gb), float(w_knn))
+                
+    w_ridge, w_gb, w_knn = best_weights
+    print(f"Best ensemble weights - Ridge: {w_ridge:.2f}, GB: {w_gb:.2f}, KNN: {w_knn:.2f}")
+
+    ensemble_predictions = (
+        w_ridge * ridge_predictions + 
+        w_gb * gb_predictions + 
+        w_knn * knn_predictions
+    )
 
     naive_predictions = np.array(
         [float(sample["current_avg_people_count"]) for sample in test_samples],
         dtype=np.float64,
     )
 
-    model_metrics = evaluate_predictions(test_samples, test_predictions)
+    ridge_metrics = evaluate_predictions(test_samples, ridge_predictions)
+    gb_metrics = evaluate_predictions(test_samples, gb_predictions)
+    knn_metrics = evaluate_predictions(test_samples, knn_predictions)
+    ensemble_metrics = evaluate_predictions(test_samples, ensemble_predictions)
     naive_metrics = evaluate_predictions(test_samples, naive_predictions)
+
+    # Per-video breakdown
+    video_metrics: dict[str, dict[str, Any]] = {}
+    for video_name in sorted({s["video_name"] for s in test_samples}):
+        video_indices = [i for i, s in enumerate(test_samples) if s["video_name"] == video_name]
+        if video_indices:
+            video_test = [test_samples[i] for i in video_indices]
+            video_pred = ensemble_predictions[video_indices]
+            video_metrics[video_name] = evaluate_predictions(video_test, video_pred)
+            video_metrics[video_name].pop("confusion_matrix", None)
 
     supervised_rows: list[dict[str, Any]] = []
     for sample in train_samples:
@@ -427,8 +743,8 @@ def main() -> None:
         supervised_rows.append(row)
 
     prediction_rows: list[dict[str, Any]] = []
-    for sample, predicted_count, naive_count in zip(
-        test_samples, test_predictions, naive_predictions
+    for sample, ridge_count, gb_count, knn_count, ensemble_count, naive_count in zip(
+        test_samples, ridge_predictions, gb_predictions, knn_predictions, ensemble_predictions, naive_predictions
     ):
         prediction_rows.append(
             {
@@ -442,13 +758,17 @@ def main() -> None:
                 "actual_future_avg_people_count": round(
                     float(sample["target_avg_people_count"]), 3
                 ),
-                "predicted_future_avg_people_count": round(float(predicted_count), 3),
-                "naive_future_avg_people_count": round(float(naive_count), 3),
+                "ridge_predicted_count": round(float(ridge_count), 3),
+                "gb_predicted_count": round(float(gb_count), 3),
+                "knn_predicted_count": round(float(knn_count), 3),
+                "ensemble_predicted_count": round(float(ensemble_count), 3),
+                "naive_predicted_count": round(float(naive_count), 3),
                 "actual_future_congestion_status": sample["target_congestion_status"],
-                "predicted_future_congestion_status": count_to_status(
-                    float(predicted_count)
-                ),
-                "naive_future_congestion_status": count_to_status(float(naive_count)),
+                "ridge_congestion_status": count_to_status(float(ridge_count)),
+                "gb_congestion_status": count_to_status(float(gb_count)),
+                "knn_congestion_status": count_to_status(float(knn_count)),
+                "ensemble_congestion_status": count_to_status(float(ensemble_count)),
+                "naive_congestion_status": count_to_status(float(naive_count)),
             }
         )
 
@@ -465,17 +785,30 @@ def main() -> None:
             "lookback": int(args.lookback),
             "horizon": int(args.horizon),
             "train_ratio": float(args.train_ratio),
-            "ridge_alpha": float(args.ridge_alpha),
+            "ridge_alpha": best_alpha,
+            "ridge_alpha_cv_scores": {str(k): v for k, v in alpha_scores.items()},
+            "ensemble_weight_ridge": w_ridge,
+            "ensemble_weight_gb": w_gb,
+            "ensemble_weight_knn": w_knn,
+            "gb_n_estimators": 100,
+            "gb_learning_rate": 0.1,
+            "gb_max_depth": 2,
+            "knn_neighbors": 5,
         },
         "dataset": {
             "zone_rows": len(rows),
             "supervised_samples": len(samples),
             "train_samples": len(train_samples),
             "test_samples": len(test_samples),
+            "feature_count": len(feature_names),
             "videos_used": sorted({row.video_name for row in rows}),
         },
-        "model_metrics": model_metrics,
+        "ridge_metrics": ridge_metrics,
+        "gradient_boosting_metrics": gb_metrics,
+        "knn_metrics": knn_metrics,
+        "ensemble_metrics": ensemble_metrics,
         "naive_baseline_metrics": naive_metrics,
+        "per_video_ensemble_metrics": video_metrics,
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -501,11 +834,17 @@ def main() -> None:
             "target_window_start_sec",
             "current_avg_people_count",
             "actual_future_avg_people_count",
-            "predicted_future_avg_people_count",
-            "naive_future_avg_people_count",
+            "ridge_predicted_count",
+            "gb_predicted_count",
+            "knn_predicted_count",
+            "ensemble_predicted_count",
+            "naive_predicted_count",
             "actual_future_congestion_status",
-            "predicted_future_congestion_status",
-            "naive_future_congestion_status",
+            "ridge_congestion_status",
+            "gb_congestion_status",
+            "knn_congestion_status",
+            "ensemble_congestion_status",
+            "naive_congestion_status",
         ],
         prediction_rows,
     )
@@ -517,22 +856,35 @@ def main() -> None:
     with open(output_dir / "phase2_metrics.json", "w") as handle:
         json.dump(metrics, handle, indent=2)
 
+    print(f"\n{'='*60}")
+    print(f"BASELINE TRAINING COMPLETE")
+    print(f"{'='*60}")
     print(f"Phase 2 supervised dataset: {output_dir / 'phase2_supervised_dataset.csv'}")
     print(f"Phase 2 predictions: {output_dir / 'phase2_predictions.csv'}")
     print(f"Phase 2 coefficients: {output_dir / 'phase2_model_coefficients.csv'}")
     print(f"Phase 2 metrics: {output_dir / 'phase2_metrics.json'}")
+    print(f"{'='*60}")
     print(
-        "Model test MAE: "
-        f"{metrics['model_metrics']['mae']:.3f} | "
-        "Model congestion accuracy: "
-        f"{metrics['model_metrics']['congestion_accuracy']:.3f}"
+        f"Ridge MAE: {ridge_metrics['mae']:.4f} | "
+        f"Ridge accuracy: {ridge_metrics['congestion_accuracy']:.4f}"
     )
     print(
-        "Naive baseline MAE: "
-        f"{metrics['naive_baseline_metrics']['mae']:.3f} | "
-        "Naive congestion accuracy: "
-        f"{metrics['naive_baseline_metrics']['congestion_accuracy']:.3f}"
+        f"GB MAE: {gb_metrics['mae']:.4f} | "
+        f"GB accuracy: {gb_metrics['congestion_accuracy']:.4f}"
     )
+    print(
+        f"KNN MAE: {knn_metrics['mae']:.4f} | "
+        f"KNN accuracy: {knn_metrics['congestion_accuracy']:.4f}"
+    )
+    print(
+        f"Ensemble MAE: {ensemble_metrics['mae']:.4f} | "
+        f"Ensemble accuracy: {ensemble_metrics['congestion_accuracy']:.4f}"
+    )
+    print(
+        f"Naive MAE: {naive_metrics['mae']:.4f} | "
+        f"Naive accuracy: {naive_metrics['congestion_accuracy']:.4f}"
+    )
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":

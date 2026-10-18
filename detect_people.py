@@ -6,6 +6,7 @@ import os
 import sys
 import time
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from typing import Any
 
 import cv2
@@ -86,6 +87,15 @@ TRANSITION_FIELDNAMES = [
     "from_zone",
     "to_zone",
 ]
+
+
+@dataclass
+class StableTrackState:
+    stable_id: int
+    raw_tracker_id: int
+    last_frame: int
+    box: tuple[float, float, float, float]
+    anchor: tuple[float, float]
 
 
 def resolve_default_model() -> str:
@@ -207,11 +217,38 @@ def parse_args() -> argparse.Namespace:
         help="Append confidence values to output-video ID labels.",
     )
     parser.add_argument(
+        "--stable-id-gap-seconds",
+        type=float,
+        default=1.5,
+        help="Maximum gap used to reconnect a reappearing track to its previous ID.",
+    )
+    parser.add_argument(
+        "--stable-id-distance-ratio",
+        type=float,
+        default=0.08,
+        help="Maximum normalized anchor distance used for stable-ID reassignment.",
+    )
+    parser.add_argument(
+        "--stable-id-min-iou",
+        type=float,
+        default=0.10,
+        help="Minimum IOU hint used when reconnecting short occlusion gaps.",
+    )
+    parser.add_argument(
         "--no-preview",
         action="store_true",
         help="Disable the live preview window and only save the final output.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--output",
+        dest="flag_output_path",
+        default=None,
+        help="Optional output video filename alias.",
+    )
+    args = parser.parse_args()
+    if args.flag_output_path and not args.output_path:
+        args.output_path = args.flag_output_path
+    return args
 
 
 def draw_grid(
@@ -333,14 +370,57 @@ def get_zone_number(
     return row * grid_size + col + 1
 
 
-def get_congestion_status(people_count: float) -> str:
-    if people_count < 5:
-        return "LOW"
-    if people_count < 15:
-        return "MEDIUM"
-    if people_count < 30:
-        return "HIGH"
-    return "CRITICAL"
+def calculate_congestion_index(
+    people_count: float,
+    speed_px_per_sec: float = 65.0,
+    zone_capacity: float = 15.0,
+    free_flow_speed: float = 75.0,
+    inflow_net: float = 0.0,
+) -> tuple[float, str]:
+    """Calculate Multi-Modal Congestion Hazard Index (CHI) for Transit Hubs.
+    
+    Combines:
+    1. Density vs Capacity Ratio (55% weight)
+    2. Velocity Drop / Stagnation Factor (30% weight)
+    3. Inflow Pressure / Net Inrush (15% weight)
+    """
+    safe_cap = max(1.0, float(zone_capacity))
+    density_ratio = min(2.0, float(people_count) / safe_cap)
+    
+    safe_free_speed = max(10.0, float(free_flow_speed))
+    clamped_speed = max(0.0, min(float(speed_px_per_sec), safe_free_speed))
+    velocity_stagnation = 1.0 - (clamped_speed / safe_free_speed)
+    
+    inflow_factor = min(1.0, max(0.0, float(inflow_net) / 5.0))
+    
+    chi = (0.55 * density_ratio) + (0.30 * velocity_stagnation) + (0.15 * inflow_factor)
+    
+    if chi < 0.40:
+        status = "LOW"
+    elif chi < 0.75:
+        status = "MEDIUM"
+    elif chi < 1.10:
+        status = "HIGH"
+    else:
+        status = "CRITICAL"
+        
+    return round(chi, 3), status
+
+
+def get_congestion_status(
+    people_count: float,
+    speed_px_per_sec: float = 65.0,
+    zone_capacity: float = 15.0,
+    free_flow_speed: float = 75.0,
+) -> str:
+    """Classify congestion status using calibrated multi-modal index."""
+    _, status = calculate_congestion_index(
+        people_count=people_count,
+        speed_px_per_sec=speed_px_per_sec,
+        zone_capacity=zone_capacity,
+        free_flow_speed=free_flow_speed,
+    )
+    return status
 
 
 def get_speed_color(speed_px_per_sec: float) -> tuple[int, int, int]:
@@ -368,6 +448,111 @@ def append_smoothed_point(
         smoothed = point
     history.append(smoothed)
     return smoothed
+
+
+def compute_box_iou(box_a: np.ndarray, box_b: tuple[float, float, float, float]) -> float:
+    ax1, ay1, ax2, ay2 = [float(v) for v in box_a]
+    bx1, by1, bx2, by2 = box_b
+
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    intersection = inter_w * inter_h
+    if intersection <= 0.0:
+        return 0.0
+
+    area_a = max(1.0, (ax2 - ax1) * (ay2 - ay1))
+    area_b = max(1.0, (bx2 - bx1) * (by2 - by1))
+    union = area_a + area_b - intersection
+    return float(intersection / union) if union > 0 else 0.0
+
+
+def resolve_stable_tracker_id(
+    raw_tracker_id: int,
+    box: np.ndarray,
+    anchor_point: tuple[float, float],
+    frame_index: int,
+    frame_shape: tuple[int, ...],
+    raw_to_stable: dict[int, int],
+    stable_states: dict[int, StableTrackState],
+    assigned_this_frame: set[int],
+    next_stable_id: int,
+    max_gap_frames: int,
+    max_distance_ratio: float,
+    min_iou: float,
+) -> tuple[int, int]:
+    existing_stable_id = raw_to_stable.get(raw_tracker_id)
+    if existing_stable_id is not None and existing_stable_id not in assigned_this_frame:
+        state = stable_states.get(existing_stable_id)
+        if state is None or frame_index - state.last_frame <= max_gap_frames:
+            assigned_this_frame.add(existing_stable_id)
+            return existing_stable_id, next_stable_id
+
+    frame_h, frame_w = frame_shape[:2]
+    frame_diag = max(1.0, math.hypot(frame_w, frame_h))
+    best_stable_id: int | None = None
+    best_score = -1.0
+
+    for stable_id, state in stable_states.items():
+        if stable_id in assigned_this_frame:
+            continue
+
+        gap_frames = frame_index - state.last_frame
+        if gap_frames <= 0 or gap_frames > max_gap_frames:
+            continue
+
+        iou = compute_box_iou(box, state.box)
+        distance = math.hypot(
+            anchor_point[0] - state.anchor[0],
+            anchor_point[1] - state.anchor[1],
+        )
+        normalized_distance = distance / frame_diag
+
+        current_area = max(1.0, float((box[2] - box[0]) * (box[3] - box[1])))
+        previous_area = max(
+            1.0, float((state.box[2] - state.box[0]) * (state.box[3] - state.box[1]))
+        )
+        area_similarity = min(current_area, previous_area) / max(current_area, previous_area)
+
+        if iou < min_iou and normalized_distance > max_distance_ratio:
+            continue
+
+        score = (
+            (iou * 0.60)
+            + (max(0.0, 1.0 - (normalized_distance / max_distance_ratio)) * 0.25)
+            + (area_similarity * 0.10)
+            + (max(0.0, 1.0 - (gap_frames / max_gap_frames)) * 0.05)
+        )
+        if score > best_score:
+            best_score = score
+            best_stable_id = stable_id
+
+    if best_stable_id is not None:
+        raw_to_stable[raw_tracker_id] = best_stable_id
+        assigned_this_frame.add(best_stable_id)
+        return best_stable_id, next_stable_id
+
+    stable_id = next_stable_id
+    raw_to_stable[raw_tracker_id] = stable_id
+    assigned_this_frame.add(stable_id)
+    return stable_id, next_stable_id + 1
+
+
+def prune_stable_track_states(
+    stable_states: dict[int, StableTrackState],
+    frame_index: int,
+    max_gap_frames: int,
+) -> None:
+    stale_ids = [
+        stable_id
+        for stable_id, state in stable_states.items()
+        if frame_index - state.last_frame > max_gap_frames
+    ]
+    for stable_id in stale_ids:
+        stable_states.pop(stable_id, None)
 
 
 def compute_track_motion(
@@ -592,7 +777,11 @@ def process_video(
     slice_size: int = 960,
     slice_overlap: int = 160,
     show_labels: bool = False,
+    stable_id_gap_seconds: float = 1.5,
+    stable_id_distance_ratio: float = 0.08,
+    stable_id_min_iou: float = 0.10,
     no_preview: bool = False,
+    frame_callback: Any | None = None,
 ) -> None:
     model_path = model_path or resolve_default_model()
     print(f"Loading: {video_path}")
@@ -661,6 +850,10 @@ def process_video(
     people_history: list[int] = []
     frame_times: list[float] = []
     last_zone_by_tracker: dict[int, int] = {}
+    raw_to_stable_id: dict[int, int] = {}
+    stable_states: dict[int, StableTrackState] = {}
+    next_stable_id = 1
+    stable_id_gap_frames = max(1, int(round(stable_id_gap_seconds * fps)))
 
     detection_rows: list[dict[str, Any]] = []
     flow_rows: list[dict[str, Any]] = []
@@ -724,6 +917,7 @@ def process_video(
 
         labels: list[str] = []
         out_frame = box_annotator.annotate(scene=frame.copy(), detections=people)
+        assigned_stable_ids: set[int] = set()
 
         for box, tracker_id, confidence in zip(
             people.xyxy,
@@ -733,8 +927,29 @@ def process_video(
             if tracker_id is None:
                 continue
 
-            tracker_id_int = int(tracker_id)
+            raw_tracker_id = int(tracker_id)
             anchor_x, anchor_y = get_anchor_point(box)
+            tracker_id_int, next_stable_id = resolve_stable_tracker_id(
+                raw_tracker_id=raw_tracker_id,
+                box=box,
+                anchor_point=(anchor_x, anchor_y),
+                frame_index=frame_count,
+                frame_shape=frame.shape,
+                raw_to_stable=raw_to_stable_id,
+                stable_states=stable_states,
+                assigned_this_frame=assigned_stable_ids,
+                next_stable_id=next_stable_id,
+                max_gap_frames=stable_id_gap_frames,
+                max_distance_ratio=stable_id_distance_ratio,
+                min_iou=stable_id_min_iou,
+            )
+            stable_states[tracker_id_int] = StableTrackState(
+                stable_id=tracker_id_int,
+                raw_tracker_id=raw_tracker_id,
+                last_frame=frame_count,
+                box=tuple(float(v) for v in box),
+                anchor=(anchor_x, anchor_y),
+            )
             zone_number = get_zone_number(anchor_x, anchor_y, frame.shape, grid_size)
             congestion = zone_statuses[zone_number - 1]
             zone_tracker_ids[zone_number - 1].append(tracker_id_int)
@@ -849,6 +1064,12 @@ def process_video(
                 )
             last_zone_by_tracker[tracker_id_int] = zone_number
 
+        prune_stable_track_states(
+            stable_states=stable_states,
+            frame_index=frame_count,
+            max_gap_frames=stable_id_gap_frames,
+        )
+
         preview_frame = out_frame.copy()
         preview_frame = draw_grid(
             preview_frame, zone_counts, zone_statuses, grid_size=grid_size
@@ -942,6 +1163,12 @@ def process_video(
                 (0, 0, 255),
                 2,
             )
+
+        if frame_callback is not None:
+            try:
+                frame_callback(preview_frame, frame_count, total)
+            except Exception:
+                pass
 
         if not no_preview:
             cv2.imshow("Live", preview_frame)
@@ -1055,6 +1282,9 @@ def process_video(
         "slice_size": slice_size,
         "slice_overlap": slice_overlap,
         "show_labels": show_labels,
+        "stable_id_gap_seconds": stable_id_gap_seconds,
+        "stable_id_distance_ratio": stable_id_distance_ratio,
+        "stable_id_min_iou": stable_id_min_iou,
         "no_preview": no_preview,
     }
     with open(metadata_path, "w") as handle:
@@ -1128,5 +1358,42 @@ if __name__ == "__main__":
         slice_size=args.slice_size,
         slice_overlap=args.slice_overlap,
         show_labels=args.show_labels,
+        stable_id_gap_seconds=args.stable_id_gap_seconds,
+        stable_id_distance_ratio=args.stable_id_distance_ratio,
+        stable_id_min_iou=args.stable_id_min_iou,
         no_preview=args.no_preview,
     )
+    
+    # 🎯 AUTO-GENERATE PREDICTIONS AFTER DETECTION
+    import subprocess
+    print("\n" + "="*70)
+    print("🎬 AUTO-GENERATING PREDICTION OVERLAY VIDEO...")
+    print("=" * 70)
+    
+    try:
+        checkpoint_path = "output/phase2_training/phase2_lstm_multidata_retrained/phase2_lstm_checkpoint.pt"
+        if not os.path.exists(checkpoint_path):
+            checkpoint_path = "output/phase2_training/phase2_lstm/phase2_lstm_checkpoint.pt"
+
+        pred_cmd = [
+            "python3",
+            "phase1_with_predictions.py",
+            "--video", video_path,
+            "--checkpoint", checkpoint_path,
+            "--output-dir", "output/phase1_processed",
+            "--model", args.model,
+            "--conf", str(args.conf),
+            "--imgsz", str(args.imgsz),
+        ]
+        
+        result = subprocess.run(pred_cmd, capture_output=True, text=True, timeout=3600)
+        if result.returncode == 0:
+            print("✅ Prediction overlay video generated successfully!")
+        else:
+            err_msg = result.stderr.strip() or result.stdout.strip()
+            print(f"⚠️  Could not generate prediction video (non-critical). Error:\n{err_msg}")
+    except Exception as e:
+        print(f"⚠️  Prediction generation skipped: {e}")
+    
+    print("=" * 70)
+

@@ -35,13 +35,15 @@ def generate_comparison_report() -> None:
     lstm_test_rmse = lstm_metrics["test_metrics"]["rmse"]
     lstm_congestion_acc = lstm_metrics["test_metrics"]["congestion_accuracy"]
     
-    baseline_test_mae = baseline_metrics["model_metrics"]["mae"]
-    baseline_test_rmse = baseline_metrics["model_metrics"]["rmse"]
-    baseline_congestion_acc = baseline_metrics["model_metrics"]["congestion_accuracy"]
+    ridge_m = baseline_metrics.get("ridge_metrics") or baseline_metrics.get("model_metrics") or {}
+    baseline_test_mae = ridge_m["mae"]
+    baseline_test_rmse = ridge_m["rmse"]
+    baseline_congestion_acc = ridge_m["congestion_accuracy"]
     
-    naive_test_mae = baseline_metrics["naive_baseline_metrics"]["mae"]
-    naive_test_rmse = baseline_metrics["naive_baseline_metrics"]["rmse"]
-    naive_congestion_acc = baseline_metrics["naive_baseline_metrics"]["congestion_accuracy"]
+    naive_m = baseline_metrics.get("naive_metrics") or baseline_metrics.get("naive_baseline_metrics") or {}
+    naive_test_mae = naive_m["mae"]
+    naive_test_rmse = naive_m["rmse"]
+    naive_congestion_acc = naive_m["congestion_accuracy"]
     
     report = f"""# Phase 2 Model Comparison Report
 

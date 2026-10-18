@@ -1,0 +1,27 @@
+{
+  "checkpoint": "output/phase2_training/phase2_lstm_multidata_retrained/phase2_lstm_checkpoint.pt",
+  "input_root": "output/phase1_processed",
+  "device": "mps",
+  "sequence_count": 2142,
+  "videos_with_sequences": [
+    "2015_UNC_Crowd_Dataset_Sample_1080P",
+    "6387-191695740",
+    "Mall",
+    "People_Walking_Free_Stock_Footage_Royalty-Free_No_Copyright_Content_1080p",
+    "Times_Square_Crowd_People_2_HD_Video_Background_720P",
+    "istockphoto-1167927700-640_adpp_is",
+    "istockphoto-2267158078-640_adpp_is",
+    "stock-footage-mumbai-india-aug-busy-pedestrian-street-of-indian-city-crowd-of-walking-people"
+  ],
+  "average_loss": 1.1155580511028225,
+  "metrics": {
+    "mae": 1.0534040927886963,
+    "rmse": 1.7236759662628174,
+    "step_mae": [
+      0.7822516560554504,
+      1.0730137825012207,
+      1.3049466609954834
+    ],
+    "congestion_accuracy": 0.8985371926548397
+  }
+}
