@@ -21,8 +21,9 @@ Our system proposes an **end-to-end spatio-temporal predictive pipeline**:
 
 | Deployment Platform | URL / Access Point | Status |
 |---|---|---|
-| **Streamlit Community Cloud (Public)** | `https://supervision-crowd-analytics.streamlit.app` | Ready to Deploy from `abhiisekkh/supervision` |
-| **Local Exhibition Server (LAN)** | `http://localhost:8501` | Active & Verified |
+| **Live Exhibition Public URL (Instant)** | `https://sixty-breads-sing.loca.lt` | **LIVE & ACTIVE NOW** (Tunnel Password: `103.166.100.39`) |
+| **Streamlit Community Cloud (Permanent)** | `https://share.streamlit.io/` | 1-Click Deploy from `abhiisekkh/supervision` |
+| **Local Exhibition Server (LAN)** | `http://localhost:8501` | Active on Port 8501 |
 | **Source Code Repository** | `https://github.com/abhiisekkh/supervision` | Public GitHub Repository |
 
 ### How to Deploy to Streamlit Cloud in 3 Clicks (Free & Permanent):
