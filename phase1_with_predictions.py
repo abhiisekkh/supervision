@@ -28,8 +28,18 @@ from typing import Optional
 import cv2
 import numpy as np
 import torch
-import supervision as sv
+
+_src_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+if os.path.exists(_src_dir) and _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
+try:
+    import supervision as sv
+except ImportError:
+    import src.supervision as sv
+
 from ultralytics import YOLO
+
 
 # Import Phase 2 LSTM components
 sys.path.insert(0, str(Path(__file__).parent))

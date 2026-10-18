@@ -1398,7 +1398,7 @@ if __name__ == "__main__":
             checkpoint_path = "output/phase2_training/phase2_lstm/phase2_lstm_checkpoint.pt"
 
         pred_cmd = [
-            "python3",
+            sys.executable,
             "phase1_with_predictions.py",
             "--video", video_path,
             "--checkpoint", checkpoint_path,
