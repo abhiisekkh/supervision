@@ -95,12 +95,66 @@ st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-    html, body, [class*="css"] {{
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    html, body, [class*="css"], .stApp {{
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+        background-color: {bg_app} !important;
+        color: {fg_app} !important;
     }}
 
-    .stApp {{
-        background-color: {bg_app} !important;
+    /* Global Typography Enforcements for Light & Dark Modes */
+    .stApp p, .stApp span, .stApp div, .stApp label, .stApp li, .stApp td, .stApp th {{
+        color: {fg_app} !important;
+    }}
+    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6 {{
+        color: {fg_app} !important;
+    }}
+    [data-testid="stMarkdownContainer"] p,
+    [data-testid="stMarkdownContainer"] span,
+    [data-testid="stMarkdownContainer"] li,
+    [data-testid="stMarkdownContainer"] strong,
+    [data-testid="stMarkdownContainer"] em,
+    [data-testid="stMarkdownContainer"] h1,
+    [data-testid="stMarkdownContainer"] h2,
+    [data-testid="stMarkdownContainer"] h3,
+    [data-testid="stMarkdownContainer"] h4,
+    [data-testid="stMarkdownContainer"] h5,
+    [data-testid="stMarkdownContainer"] h6 {{
+        color: {fg_app} !important;
+    }}
+    [data-testid="stWidgetLabel"] p,
+    [data-testid="stWidgetLabel"] span,
+    [data-testid="stWidgetLabel"] label {{
+        color: {fg_app} !important;
+    }}
+    .stCaption, [data-testid="stCaptionContainer"] p {{
+        color: {sub_fg} !important;
+    }}
+    .stRadio label span, .stSelectbox label span, .stSlider label span {{
+        color: {fg_app} !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] * {{
+        color: {fg_app} !important;
+    }}
+    section[data-testid="stSidebar"] label * {{
+        color: {fg_app} !important;
+    }}
+
+    /* Form controls */
+    div[data-baseweb="select"] > div {{
+        background-color: {panel_bg} !important;
+        color: {fg_app} !important;
+        border: 1px solid {border_col} !important;
+    }}
+    div[data-baseweb="select"] span {{
+        color: {fg_app} !important;
+    }}
+    div[data-baseweb="input"] {{
+        background-color: {panel_bg} !important;
+        color: {fg_app} !important;
+        border: 1px solid {border_col} !important;
+    }}
+    div[data-baseweb="input"] input {{
+        background-color: {panel_bg} !important;
         color: {fg_app} !important;
     }}
 
@@ -257,6 +311,44 @@ st.markdown(f"""
         background: {hover_bg};
     }}
 
+    /* Buttons & Interactive Elements */
+    .stButton > button {{
+        background-color: {panel_bg} !important;
+        color: {fg_app} !important;
+        border: 1px solid {border_col} !important;
+        font-weight: 600 !important;
+        border-radius: 0px !important;
+    }}
+    .stButton > button[kind="primary"] {{
+        background-color: {fg_app} !important;
+        color: {bg_app} !important;
+        border: 1px solid {fg_app} !important;
+    }}
+    .stDownloadButton > button {{
+        background-color: {panel_bg} !important;
+        color: {fg_app} !important;
+        border: 1px solid {border_col} !important;
+        border-radius: 0px !important;
+    }}
+
+    /* Code & Terminal Blocks */
+    code, pre, .stCodeBlock {{
+        background-color: {panel_bg} !important;
+        color: {fg_app} !important;
+        border: 1px solid {border_col} !important;
+        font-family: 'JetBrains Mono', monospace !important;
+    }}
+
+    /* Expanders */
+    div[data-testid="stExpander"] {{
+        background-color: {panel_bg} !important;
+        border: 1px solid {border_col} !important;
+        border-radius: 0px !important;
+    }}
+    div[data-testid="stExpander"] summary span {{
+        color: {fg_app} !important;
+    }}
+
     /* Sidebar overrides */
     section[data-testid="stSidebar"] {{
         background-color: {panel_bg} !important;
@@ -269,6 +361,7 @@ st.markdown(f"""
         padding-top: 1rem !important;
         padding-bottom: 2rem !important;
     }}
+
 </style>
 """, unsafe_allow_html=True)
 
