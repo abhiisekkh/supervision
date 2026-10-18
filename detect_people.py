@@ -1171,7 +1171,10 @@ def process_video(
                 pass
 
         if not no_preview:
-            cv2.imshow("Live", preview_frame)
+            try:
+                cv2.imshow("Live", preview_frame)
+            except (cv2.error, Exception):
+                no_preview = True
 
         if not paused:
             out.write(out_frame)

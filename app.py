@@ -528,6 +528,7 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
     target_video = ""
     col_in1, col_in2 = st.columns([1.6, 1.0])
 
+    has_gui = bool(os.environ.get("DISPLAY"))
     if source_mode == "Upload New Video (Drag & Drop)":
         with col_in1:
             uploaded_file = st.file_uploader("Click to browse or drag and drop video (.mp4, .avi, .mov):", type=["mp4", "avi", "mov"])
@@ -540,7 +541,9 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
                 target_video = str(save_path.resolve())
                 st.caption(f"File uploaded: `{uploaded_file.name}` ({uploaded_file.size / (1024*1024):.2f} MB)")
         with col_in2:
-            show_desktop = st.checkbox("Enable Live Display Window", value=True, help="Streams live detection visualizer.")
+            show_desktop = st.checkbox("Enable Live Display Window", value=has_gui, help="Streams live detection visualizer (local desktop only).")
+            if not has_gui:
+                st.caption("ℹ️ Cloud server: runs headless and generates result video + CSVs.")
     else:
         # Build clean list of video sources with 6387-191695740.mp4 prioritized as default
         local_sample_video = BASE_DIR / "sample_data" / "6387-191695740.mp4"
@@ -573,7 +576,9 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
                 st.warning("No video feeds found in workspace.")
                 target_video = ""
         with col_in2:
-            show_desktop = st.checkbox("Enable Live Display Window", value=True, help="Streams live detection visualizer.")
+            show_desktop = st.checkbox("Enable Live Display Window", value=has_gui, help="Streams live detection visualizer (local desktop only).")
+            if not has_gui:
+                st.caption("ℹ️ Cloud server: runs headless and generates result video + CSVs.")
 
     # Video Player Preview Box (Interactive: Play, Pause, Fullscreen, Seek)
     if target_video and Path(target_video).exists():
@@ -636,9 +641,11 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
                 "--imgsz", str(int(imgsz_val)),
                 "--flow-interval", str(int(flow_int)),
             ]
-            if not show_desktop:
+            if not show_desktop or not has_gui:
                 cmd_exec.append("--no-preview")
 
+            log_container = st.empty()
+            logs = []
             with st.spinner("Execution started... Running detection, tracking, and optical flow analysis."):
                 try:
                     proc = subprocess.Popen(
@@ -647,7 +654,14 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         text=True,
+                        bufsize=1,
                     )
+                    if proc.stdout:
+                        for line in proc.stdout:
+                            logs.append(line)
+                            recent = "".join(logs[-15:])
+                            log_container.code(recent, language="text")
+
                     proc.wait()
 
                     if proc.returncode == 0:
@@ -655,9 +669,12 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
                         st.markdown(f"Generated CSVs: `zone_time_series.csv`, `tracked_detections.csv`, `flow_vectors.csv`")
                         st.cache_data.clear()
                     else:
-                        st.error("Process terminated with an error.")
+                        st.error(f"Process terminated with exit code {proc.returncode}.")
+                        with st.expander("View Full Execution Error Log", expanded=True):
+                            st.code("".join(logs) if logs else "No output captured.", language="text")
                 except Exception as e:
                     st.error(f"Execution Error: {e}")
+
 
 
 # ==========================================
