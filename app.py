@@ -77,6 +77,9 @@ if is_dark:
     highlight = "#ffffff"
     badge_bg = "#1c1c1c"
     badge_fg = "#ffffff"
+    btn_pri_bg = "#ffffff"
+    btn_pri_fg = "#000000"
+    btn_pri_border = "#ffffff"
 else:
     bg_app = "#ffffff"
     fg_app = "#000000"
@@ -90,6 +93,10 @@ else:
     highlight = "#000000"
     badge_bg = "#e5e5e5"
     badge_fg = "#000000"
+    btn_pri_bg = "#000000"
+    btn_pri_fg = "#ffffff"
+    btn_pri_border = "#000000"
+
 
 st.markdown(f"""
 <style>
@@ -312,7 +319,10 @@ st.markdown(f"""
     }}
 
     /* Buttons & Interactive Elements */
-    .stButton > button {{
+    .stButton > button,
+    .stButton > button p,
+    .stButton > button span,
+    .stButton > button div {{
         background-color: {panel_bg} !important;
         color: {fg_app} !important;
         border: 1px solid {border_col} !important;
@@ -320,16 +330,28 @@ st.markdown(f"""
         border-radius: 0px !important;
     }}
     .stButton > button[kind="primary"] {{
-        background-color: {fg_app} !important;
-        color: {bg_app} !important;
-        border: 1px solid {fg_app} !important;
+        background-color: {btn_pri_bg} !important;
+        border: 1px solid {btn_pri_border} !important;
     }}
-    .stDownloadButton > button {{
+    .stButton > button[kind="primary"] p,
+    .stButton > button[kind="primary"] span,
+    .stButton > button[kind="primary"] div {{
+        background-color: transparent !important;
+        color: {btn_pri_fg} !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.5px !important;
+    }}
+    .stDownloadButton > button,
+    .stDownloadButton > button p,
+    .stDownloadButton > button span,
+    .stDownloadButton > button div {{
         background-color: {panel_bg} !important;
         color: {fg_app} !important;
         border: 1px solid {border_col} !important;
         border-radius: 0px !important;
     }}
+
+
 
     /* Code & Terminal Blocks */
     code, pre, .stCodeBlock {{
