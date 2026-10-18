@@ -1,0 +1,122 @@
+{
+  "config": {
+    "input_root": "output/phase1_processed",
+    "lookback_seconds": 8,
+    "predict_seconds": 3,
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "batch_size": 16,
+    "epochs": 40,
+    "learning_rate": 0.0005,
+    "hidden_size": 64,
+    "num_layers": 2,
+    "dropout": 0.3,
+    "teacher_forcing": 0.5,
+    "patience": 15,
+    "seed": 42,
+    "device": "cpu",
+    "output_dir": "output/phase2_training/phase2_lstm",
+    "weight_decay": 0.0001,
+    "use_attention": true,
+    "no_attention": false,
+    "ema_decay": 0.999
+  },
+  "device": "cpu",
+  "model_type": "attention",
+  "total_parameters": 283969,
+  "trainable_parameters": 283969,
+  "dataset": {
+    "zone_rows": 3042,
+    "total_sequences": 2142,
+    "train_sequences": 1449,
+    "val_sequences": 324,
+    "test_sequences": 369,
+    "videos_with_zone_rows": [
+      "2015_UNC_Crowd_Dataset_Sample_1080P",
+      "256701",
+      "5021552-hd_1920_1080_30fps",
+      "6387-191695740",
+      "Mall",
+      "People_Walking_Free_Stock_Footage_Royalty-Free_No_Copyright_Content_1080p",
+      "Times_Square_Crowd_People_2_HD_Video_Background_720P",
+      "istockphoto-1167927700-640_adpp_is",
+      "istockphoto-2267158078-640_adpp_is",
+      "istockphoto-473333595-640_adpp_is",
+      "market-square",
+      "stock-footage-mumbai-india-aug-busy-pedestrian-street-of-indian-city-crowd-of-walking-people",
+      "subway"
+    ],
+    "videos_with_sequences": [
+      "2015_UNC_Crowd_Dataset_Sample_1080P",
+      "6387-191695740",
+      "Mall",
+      "People_Walking_Free_Stock_Footage_Royalty-Free_No_Copyright_Content_1080p",
+      "Times_Square_Crowd_People_2_HD_Video_Background_720P",
+      "istockphoto-1167927700-640_adpp_is",
+      "istockphoto-2267158078-640_adpp_is",
+      "stock-footage-mumbai-india-aug-busy-pedestrian-street-of-indian-city-crowd-of-walking-people"
+    ],
+    "series_with_sequences": 72,
+    "feature_names": [
+      "avg_people_count",
+      "max_people_count",
+      "unique_track_ids",
+      "avg_speed_px_per_sec",
+      "mean_flow_dx_per_frame",
+      "mean_flow_dy_per_frame",
+      "mean_optical_flow_dx_per_frame",
+      "mean_optical_flow_dy_per_frame",
+      "inflow_count",
+      "outflow_count",
+      "direction_x",
+      "direction_y",
+      "congestion_level"
+    ]
+  },
+  "best_validation_mae": 2.0413475036621094,
+  "test_loss": 0.09388356139728178,
+  "test_metrics": {
+    "mae": 0.6411181092262268,
+    "rmse": 1.0350672006607056,
+    "step_mae": [
+      0.5029402375221252,
+      0.6750295758247375,
+      0.7453845143318176
+    ],
+    "congestion_accuracy": 0.947606142728094
+  },
+  "normalization": {
+    "feature_mean": [
+      2.2349159717559814,
+      3.07047963142395,
+      3.651742696762085,
+      69.29521942138672,
+      -0.08673854172229767,
+      -0.034780170768499374,
+      -0.14043769240379333,
+      0.0002655237913131714,
+      1.0685818195343018,
+      1.0685818195343018,
+      -0.01517579797655344,
+      -0.0035953896585851908,
+      0.1305210441350937
+    ],
+    "feature_std": [
+      2.4573235511779785,
+      3.0587217807769775,
+      3.578437328338623,
+      82.12446594238281,
+      2.538259983062744,
+      1.4986099004745483,
+      2.321232557296753,
+      1.066889762878418,
+      1.6157795190811157,
+      1.5784071683883667,
+      0.6475550532341003,
+      0.45937567949295044,
+      0.3368898332118988
+    ],
+    "target_mean": 2.2820847034454346,
+    "target_std": 2.413438558578491
+  }
+}

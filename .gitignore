@@ -160,6 +160,12 @@ output/
 *.pt
 *.csv
 
+# Whitelist trained model checkpoints and sample outputs
+!output/phase2_training/*/phase2_lstm_checkpoint.pt
+!output/phase2_training/*/*.json
+!sample_data/**
+
+
 # Claude working scratchpad (plans, lessons, ephemeral artefacts)
 tasks/
 *.local.md
