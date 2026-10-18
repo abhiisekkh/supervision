@@ -1229,7 +1229,11 @@ def process_video(
 
     cap.release()
     out.release()
-    cv2.destroyAllWindows()
+    try:
+        cv2.destroyAllWindows()
+    except Exception:
+        pass
+
 
     zone_rows: list[dict[str, Any]] = []
     for key in sorted(zone_windows):
