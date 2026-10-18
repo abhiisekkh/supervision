@@ -11,9 +11,24 @@ from typing import Any
 
 import cv2
 import numpy as np
-import supervision as sv
-from tkinter import Tk, filedialog
+
+# Ensure local supervision module in src/ is accessible as fallback
+_src_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+if os.path.exists(_src_dir) and _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
+try:
+    import supervision as sv
+except ImportError:
+    import src.supervision as sv
+
+try:
+    from tkinter import Tk, filedialog
+except ImportError:
+    Tk, filedialog = None, None
+
 from ultralytics import YOLO
+
 
 
 DEFAULT_MODEL_CANDIDATES = [
