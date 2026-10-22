@@ -752,7 +752,7 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
             out_vid = str(out_dir / f"{vname}_result.mp4")
 
             cmd_exec = [
-                sys.executable, "detect_people.py",
+                sys.executable, "-u", "detect_people.py",
                 target_video,
                 out_vid,
                 "3",
@@ -766,6 +766,8 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
 
             log_container = st.empty()
             logs = []
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
             with st.spinner("Execution started... Running detection, tracking, and optical flow analysis."):
                 try:
                     proc = subprocess.Popen(
@@ -773,9 +775,11 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
                         cwd=str(BASE_DIR),
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
+                        env=env,
                         text=True,
                         bufsize=1,
                     )
+
                     if proc.stdout:
                         for line in proc.stdout:
                             logs.append(line)
