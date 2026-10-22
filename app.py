@@ -430,19 +430,26 @@ DIRECTION_LABELS = {
 
 @st.cache_data
 def get_processed_videos():
-    if not PHASE1_DIR.exists():
-        return {}
-    video_folders = [f for f in PHASE1_DIR.iterdir() if f.is_dir() and not f.name.startswith(".")]
+    search_dirs = [
+        BASE_DIR / "output" / "phase1_processed",
+        BASE_DIR / "sample_data" / "phase1_processed"
+    ]
     result = {}
-    for folder in video_folders:
-        csv_file = folder / "zone_time_series.csv"
-        if csv_file.exists():
-            mp4_files = list(folder.glob("*.mp4"))
-            result[folder.name] = {
-                "folder": folder,
-                "csv": csv_file,
-                "videos": mp4_files
-            }
+    for pdir in search_dirs:
+        if not pdir.exists():
+            continue
+        video_folders = [f for f in pdir.iterdir() if f.is_dir() and not f.name.startswith(".")]
+        for folder in video_folders:
+            if folder.name in result:
+                continue
+            csv_file = folder / "zone_time_series.csv"
+            if csv_file.exists():
+                mp4_files = list(folder.glob("*.mp4"))
+                result[folder.name] = {
+                    "folder": folder,
+                    "csv": csv_file,
+                    "videos": mp4_files
+                }
     return result
 
 @st.cache_data
@@ -451,12 +458,17 @@ def load_zone_timeseries(csv_path):
 
 @st.cache_data
 def load_all_predictions():
-    p1 = PHASE2_DIR / "phase2_comprehensive_predictions" / "phase2_lstm_inference_predictions.csv"
-    if p1.exists():
-        return pd.read_csv(p1)
-    p2 = PHASE2_DIR / "phase2_comprehensive_predictions" / "comprehensive_predictions.csv"
-    if p2.exists():
-        return pd.read_csv(p2)
+    search_dirs = [
+        BASE_DIR / "output" / "phase2_training",
+        BASE_DIR / "sample_data" / "phase2_training"
+    ]
+    for pdir in search_dirs:
+        p1 = pdir / "phase2_comprehensive_predictions" / "phase2_lstm_inference_predictions.csv"
+        if p1.exists():
+            return pd.read_csv(p1)
+        p2 = pdir / "phase2_comprehensive_predictions" / "comprehensive_predictions.csv"
+        if p2.exists():
+            return pd.read_csv(p2)
     return None
 
 def get_badge(status):
@@ -628,18 +640,18 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
     with st.expander("Advanced Detector Parameters", expanded=False):
         col_c1, col_c2, col_c3, col_c4 = st.columns(4)
         with col_c1:
-            model_name = st.selectbox("YOLO Weights:", ["yolov8s.pt", "yolov8n.pt", "yolov8m.pt", "yolo11n.pt", "yolo11x.pt"], index=0)
+            model_name = st.selectbox("YOLO Weights:", ["yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolo11n.pt", "yolo11x.pt"], index=0, help="yolov8n is optimized for cloud RAM limits.")
         with col_c2:
             conf_val = st.number_input("Confidence:", min_value=0.05, max_value=0.90, value=0.20, step=0.05)
         with col_c3:
-            imgsz_val = st.number_input("Input Size (px):", min_value=320, max_value=1920, value=960, step=64)
+            imgsz_val = st.number_input("Input Size (px):", min_value=320, max_value=1920, value=640, step=64, help="640px is recommended for cloud memory efficiency.")
         with col_c4:
             flow_int = st.number_input("Optical Flow Interval:", min_value=1, max_value=30, value=5, step=1)
 
     if 'model_name' not in locals():
-        model_name = "yolov8s.pt"
+        model_name = "yolov8n.pt"
         conf_val = 0.20
-        imgsz_val = 960
+        imgsz_val = 640
         flow_int = 5
 
     # Video Input Mode: Select Existing vs Drag and Drop Upload
@@ -742,7 +754,17 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
         </script>
         """)
 
-    if st.button("START DETECTION PIPELINE", type="primary"):
+    col_act1, col_act2 = st.columns([1.2, 1.0])
+    with col_act1:
+        start_pipeline = st.button("START DETECTION PIPELINE", type="primary")
+    with col_act2:
+        if st.button("⚡ EXPLORE PRE-COMPUTED DEMO DATA", help="Instant switch to Step 2 with 0MB additional memory"):
+            st.session_state["flow_step"] = "Step 2: Inspect Saved Processed Videos"
+            st.rerun()
+
+    st.caption("ℹ️ Cloud Memory Safety: Configured with `yolov8n` @ 640px and single-thread execution to prevent Community Cloud 1GB RAM container limits.")
+
+    if start_pipeline:
         if not target_video or not Path(target_video).exists():
             st.error("Please specify a valid existing MP4 video file.")
         else:
@@ -767,6 +789,11 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
             logs = []
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
+            env["OMP_NUM_THREADS"] = "1"
+            env["MKL_NUM_THREADS"] = "1"
+            env["OPENBLAS_NUM_THREADS"] = "1"
+            env["VECLIB_MAXIMUM_THREADS"] = "1"
+            env["NUMEXPR_NUM_THREADS"] = "1"
             with st.status("Running detection pipeline...", expanded=True) as status:
                 log_area = st.empty()
                 try:

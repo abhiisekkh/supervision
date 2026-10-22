@@ -1,5 +1,6 @@
 import argparse
 import csv
+import gc
 import json
 import math
 import os
@@ -9,8 +10,17 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any
 
+# Prevent thread explosion and memory bloat on multi-core / CPU cloud containers
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 import cv2
 import numpy as np
+import torch
+torch.set_num_threads(1)
 
 # Ensure local supervision module in src/ is accessible as fallback
 _src_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
@@ -32,7 +42,10 @@ from ultralytics import YOLO
 
 
 DEFAULT_MODEL_CANDIDATES = [
+    "yolov8n.pt",
+    "yolov8s.pt",
     "yolov8m.pt",
+    "yolo11n.pt",
     "yolo11x.pt",
     "rtdetr-l.pt",
     "yolov8s.pt",
@@ -259,6 +272,12 @@ def parse_args() -> argparse.Namespace:
         dest="flag_output_path",
         default=None,
         help="Optional output video filename alias.",
+    )
+    parser.add_argument(
+        "--generate-predictions",
+        action="store_true",
+        default=False,
+        help="Auto-generate LSTM prediction overlay video after detection.",
     )
     args = parser.parse_args()
     if args.flag_output_path and not args.output_path:
@@ -749,15 +768,16 @@ def build_detector(
     slice_overlap: int,
 ) -> Any:
     def detect(image: np.ndarray) -> sv.Detections:
-        results = model(
-            image,
-            classes=[0],
-            conf=confidence_threshold,
-            imgsz=imgsz,
-            max_det=max_det,
-            iou=nms_iou,
-            verbose=False,
-        )
+        with torch.inference_mode():
+            results = model(
+                image,
+                classes=[0],
+                conf=confidence_threshold,
+                imgsz=imgsz,
+                max_det=max_det,
+                iou=nms_iou,
+                verbose=False,
+            )
         return sv.Detections.from_ultralytics(results[0])
 
     if not use_slicer:
@@ -1204,6 +1224,9 @@ def process_video(
             if dense_flow is not None:
                 last_dense_flow = dense_flow
 
+            if frame_count % 50 == 0:
+                gc.collect()
+
             if frame_count % max(1, total // 10) == 0 or frame_count % 100 == 0:
                 avg_people = sum(people_history[-30:]) / min(30, len(people_history))
                 fps_now = len(frame_times) / sum(frame_times) if frame_times else 0.0
@@ -1386,36 +1409,39 @@ if __name__ == "__main__":
         no_preview=args.no_preview,
     )
     
-    # 🎯 AUTO-GENERATE PREDICTIONS AFTER DETECTION
-    import subprocess
-    print("\n" + "="*70)
-    print("🎬 AUTO-GENERATING PREDICTION OVERLAY VIDEO...")
-    print("=" * 70)
-    
-    try:
-        checkpoint_path = "output/phase2_training/phase2_lstm_multidata_retrained/phase2_lstm_checkpoint.pt"
-        if not os.path.exists(checkpoint_path):
-            checkpoint_path = "output/phase2_training/phase2_lstm/phase2_lstm_checkpoint.pt"
-
-        pred_cmd = [
-            sys.executable,
-            "phase1_with_predictions.py",
-            "--video", video_path,
-            "--checkpoint", checkpoint_path,
-            "--output-dir", "output/phase1_processed",
-            "--model", args.model,
-            "--conf", str(args.conf),
-            "--imgsz", str(args.imgsz),
-        ]
+    # 🎯 AUTO-GENERATE PREDICTIONS AFTER DETECTION (OPT-IN ONLY TO PRESERVE MEMORY)
+    if getattr(args, "generate_predictions", False):
+        import subprocess
+        print("\n" + "="*70)
+        print("🎬 AUTO-GENERATING PREDICTION OVERLAY VIDEO...")
+        print("=" * 70)
         
-        result = subprocess.run(pred_cmd, capture_output=True, text=True, timeout=3600)
-        if result.returncode == 0:
-            print("✅ Prediction overlay video generated successfully!")
-        else:
-            err_msg = result.stderr.strip() or result.stdout.strip()
-            print(f"⚠️  Could not generate prediction video (non-critical). Error:\n{err_msg}")
-    except Exception as e:
-        print(f"⚠️  Prediction generation skipped: {e}")
-    
-    print("=" * 70)
+        try:
+            # Clean up before invoking second script
+            gc.collect()
+            checkpoint_path = "output/phase2_training/phase2_lstm_multidata_retrained/phase2_lstm_checkpoint.pt"
+            if not os.path.exists(checkpoint_path):
+                checkpoint_path = "output/phase2_training/phase2_lstm/phase2_lstm_checkpoint.pt"
+
+            pred_cmd = [
+                sys.executable,
+                "phase1_with_predictions.py",
+                "--video", video_path,
+                "--checkpoint", checkpoint_path,
+                "--output-dir", "output/phase1_processed",
+                "--model", args.model,
+                "--conf", str(args.conf),
+                "--imgsz", str(args.imgsz),
+            ]
+            
+            result = subprocess.run(pred_cmd, capture_output=True, text=True, timeout=3600)
+            if result.returncode == 0:
+                print("✅ Prediction overlay video generated successfully!")
+            else:
+                err_msg = result.stderr.strip() or result.stdout.strip()
+                print(f"⚠️  Could not generate prediction video (non-critical). Error:\n{err_msg}")
+        except Exception as e:
+            print(f"⚠️  Prediction generation skipped: {e}")
+        
+        print("=" * 70)
 
