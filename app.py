@@ -360,6 +360,11 @@ st.markdown(f"""
         border: 1px solid {border_col} !important;
         font-family: 'JetBrains Mono', monospace !important;
     }}
+    pre {{
+        max-height: 400px !important;
+        overflow-y: auto !important;
+        overflow-x: auto !important;
+    }}
 
     /* Expanders */
     div[data-testid="stExpander"] {{
@@ -774,7 +779,7 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
                     if proc.stdout:
                         for line in proc.stdout:
                             logs.append(line)
-                            recent = "".join(logs[-15:])
+                            recent = "".join(logs[-30:])
                             log_container.code(recent, language="text")
 
                     proc.wait()
@@ -782,6 +787,8 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
                     if proc.returncode == 0:
                         st.success(f"Processing complete! Results saved in: {out_dir.name}/")
                         st.markdown(f"Generated CSVs: `zone_time_series.csv`, `tracked_detections.csv`, `flow_vectors.csv`")
+                        with st.expander("View Full Execution Log", expanded=False):
+                            st.code("".join(logs) if logs else "No output captured.", language="text")
                         st.cache_data.clear()
                     else:
                         st.error(f"Process terminated with exit code {proc.returncode}.")
