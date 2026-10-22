@@ -1257,6 +1257,30 @@ def process_video(
     except Exception:
         pass
 
+    # Convert OpenCV mp4v output to web-compatible H.264 (avc1) via ffmpeg
+    try:
+        import shutil
+        import subprocess
+        if shutil.which("ffmpeg") and os.path.exists(final_output_path) and os.path.getsize(final_output_path) > 0:
+            temp_web_path = final_output_path + ".web.mp4"
+            conv_cmd = [
+                "ffmpeg", "-y",
+                "-i", final_output_path,
+                "-vcodec", "libx264",
+                "-crf", "24",
+                "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p",
+                temp_web_path
+            ]
+            conv_res = subprocess.run(conv_cmd, capture_output=True, timeout=180)
+            if conv_res.returncode == 0 and os.path.exists(temp_web_path) and os.path.getsize(temp_web_path) > 0:
+                os.replace(temp_web_path, final_output_path)
+                print(f"🎬 Converted to web-compatible H.264 (avc1): {final_output_path}")
+            elif os.path.exists(temp_web_path):
+                os.remove(temp_web_path)
+    except Exception as conv_err:
+        print(f"Note: ffmpeg web conversion skipped: {conv_err}")
+
 
     zone_rows: list[dict[str, Any]] = []
     for key in sorted(zone_windows):

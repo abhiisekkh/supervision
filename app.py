@@ -428,11 +428,50 @@ DIRECTION_LABELS = {
     "S": "S", "SW": "SW", "W": "W", "NW": "NW", "STILL": "STILL"
 }
 
+def ensure_web_playable_mp4(video_path: Path) -> Path:
+    """Ensure video is encoded in H.264 (avc1) for browser playback."""
+    import shutil
+    import subprocess
+    
+    if not video_path.exists():
+        return video_path
+    
+    # Check if a converted web version already exists
+    web_version = video_path.parent / f"{video_path.stem}_web.mp4"
+    if web_version.exists() and web_version.stat().st_size > 0:
+        return web_version
+        
+    if not shutil.which("ffmpeg"):
+        return video_path
+        
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+            capture_output=True, text=True, timeout=5
+        )
+        codec = probe.stdout.strip().lower()
+        if codec and codec != "h264":
+            conv_cmd = [
+                "ffmpeg", "-y",
+                "-i", str(video_path),
+                "-vcodec", "libx264",
+                "-crf", "24",
+                "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p",
+                str(web_version)
+            ]
+            subprocess.run(conv_cmd, capture_output=True, timeout=60)
+            if web_version.exists() and web_version.stat().st_size > 0:
+                return web_version
+    except Exception:
+        pass
+    return video_path
+
 @st.cache_data
 def get_processed_videos():
     search_dirs = [
+        BASE_DIR / "sample_data" / "phase1_processed",
         BASE_DIR / "output" / "phase1_processed",
-        BASE_DIR / "sample_data" / "phase1_processed"
     ]
     result = {}
     for pdir in search_dirs:
@@ -440,16 +479,22 @@ def get_processed_videos():
             continue
         video_folders = [f for f in pdir.iterdir() if f.is_dir() and not f.name.startswith(".")]
         for folder in video_folders:
-            if folder.name in result:
-                continue
             csv_file = folder / "zone_time_series.csv"
-            if csv_file.exists():
-                mp4_files = list(folder.glob("*.mp4"))
-                result[folder.name] = {
-                    "folder": folder,
-                    "csv": csv_file,
-                    "videos": mp4_files
-                }
+            mp4_files = list(folder.glob("*.mp4"))
+            if folder.name not in result:
+                if csv_file.exists() or mp4_files:
+                    result[folder.name] = {
+                        "folder": folder,
+                        "csv": csv_file if csv_file.exists() else None,
+                        "videos": mp4_files
+                    }
+            else:
+                existing_names = {v.name for v in result[folder.name]["videos"]}
+                for v in mp4_files:
+                    if v.name not in existing_names:
+                        result[folder.name]["videos"].append(v)
+                if result[folder.name]["csv"] is None and csv_file.exists():
+                    result[folder.name]["csv"] = csv_file
     return result
 
 @st.cache_data
@@ -859,8 +904,23 @@ elif flow_step == "Step 2: Inspect Saved Processed Videos":
             col_v1, col_v2 = st.columns([1.4, 1.0])
             with col_v1:
                 selected_mp4 = st.selectbox("Select Video File to Play:", [v.name for v in available_mp4s])
-                mp4_path = folder_info["folder"] / selected_mp4
-                st.video(str(mp4_path))
+                mp4_file = next(v for v in available_mp4s if v.name == selected_mp4)
+                playable_path = ensure_web_playable_mp4(mp4_file)
+                
+                try:
+                    with open(playable_path, "rb") as vf:
+                        vbytes = vf.read()
+                    st.video(vbytes, format="video/mp4")
+                    st.download_button(
+                        label=f"⬇️ Download {selected_mp4}",
+                        data=vbytes,
+                        file_name=selected_mp4,
+                        mime="video/mp4",
+                        use_container_width=True
+                    )
+                except Exception as vid_err:
+                    st.video(str(playable_path))
+                    st.warning(f"Note: Direct streaming fallback active ({vid_err})")
             with col_v2:
                 st.markdown("##### Folder Artifacts")
                 all_files = sorted(list(folder_info["folder"].iterdir()))
