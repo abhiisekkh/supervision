@@ -764,11 +764,11 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
             if not show_desktop or not has_gui:
                 cmd_exec.append("--no-preview")
 
-            log_container = st.empty()
             logs = []
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
-            with st.spinner("Execution started... Running detection, tracking, and optical flow analysis."):
+            with st.status("Running detection pipeline...", expanded=True) as status:
+                log_area = st.empty()
                 try:
                     proc = subprocess.Popen(
                         cmd_exec,
@@ -784,22 +784,26 @@ elif flow_step == "Step 1: Run Detection & Live Preview":
                         for line in proc.stdout:
                             logs.append(line)
                             recent = "".join(logs[-30:])
-                            log_container.code(recent, language="text")
+                            log_area.code(recent, language="text")
 
                     proc.wait()
 
                     if proc.returncode == 0:
+                        status.update(label="Detection pipeline completed!", state="complete", expanded=False)
                         st.success(f"Processing complete! Results saved in: {out_dir.name}/")
                         st.markdown(f"Generated CSVs: `zone_time_series.csv`, `tracked_detections.csv`, `flow_vectors.csv`")
                         with st.expander("View Full Execution Log", expanded=False):
                             st.code("".join(logs) if logs else "No output captured.", language="text")
                         st.cache_data.clear()
                     else:
+                        status.update(label="Pipeline failed!", state="error", expanded=True)
                         st.error(f"Process terminated with exit code {proc.returncode}.")
                         with st.expander("View Full Execution Error Log", expanded=True):
                             st.code("".join(logs) if logs else "No output captured.", language="text")
                 except Exception as e:
+                    status.update(label="Pipeline error!", state="error")
                     st.error(f"Execution Error: {e}")
+
 
 
 
